@@ -28,6 +28,7 @@ import org.rust.cargo.util.AutoInjectedCrates.CORE
 import org.rust.cargo.util.AutoInjectedCrates.STD
 import org.rust.ide.injected.isDoctestInjection
 import org.rust.lang.RsConstants
+import org.rust.lang.RsFileType
 import org.rust.lang.core.FeatureAvailability
 import org.rust.lang.core.IN_BAND_LIFETIMES
 import org.rust.lang.core.completion.RsMacroCompletionProvider
@@ -181,11 +182,11 @@ fun processModDeclResolveVariants(modDecl: RsModDeclItem, processor: RsResolvePr
     val psiMgr = PsiManager.getInstance(modDecl.project)
     val containingMod = modDecl.containingMod
 
-    val ownedDirectory = containingMod.getOwnedDirectory()
-    val contextualFile = modDecl.contextualFile
+    val ownedDirectory = if (modDecl.isExpandedFromIncludeMacro) modDecl.containingFile.containingDirectory else containingMod.getOwnedDirectory()
+    val contextualFile = modDecl.containingFile
     val originalFileOriginal = contextualFile.originalFile.virtualFile
     val inModRs = contextualFile.name == RsConstants.MOD_RS_FILE
-    val inCrateRoot = lazy(LazyThreadSafetyMode.NONE) { containingMod.isCrateRoot }
+    val inCrateRoot = lazy(LazyThreadSafetyMode.NONE) { !modDecl.isExpandedFromIncludeMacro && containingMod.isCrateRoot }
 
     val explicitPath = modDecl.pathAttribute
     if (explicitPath != null) {

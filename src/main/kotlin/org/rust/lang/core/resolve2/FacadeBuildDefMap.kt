@@ -106,7 +106,7 @@ private fun buildDefMapContainingExplicitItems(
         defMap.importExternCrateMacros(it.usePath.single())
     }
     val modCollectorContext = ModCollectorContext(defMap, crateRootData, context)
-    collectFileAndCalculateHash(crateRoot, crateRootData, crateRootData.macroIndex, modCollectorContext, includeMacroParent = null)
+    collectFileAndCalculateHash(crateRoot, crateRootData, crateRootData.macroIndex, modCollectorContext)
 
     return defMap
 }
