@@ -5,13 +5,13 @@
 
 package org.rust.lang.core.resolve
 
-import org.rust.MockEdition
-import org.rust.ProjectDescriptor
-import org.rust.UseNewResolve
-import org.rust.WithDependencyRustProjectDescriptor
+import org.rust.*
 import org.rust.cargo.project.workspace.CargoWorkspace
+import org.rust.ide.experiments.RsExperiments.EVALUATE_BUILD_SCRIPTS
+import org.rust.ide.experiments.RsExperiments.PROC_MACROS
 
 @MockEdition(CargoWorkspace.Edition.EDITION_2018)
+@WithExperimentalFeatures(EVALUATE_BUILD_SCRIPTS, PROC_MACROS)
 @ProjectDescriptor(WithDependencyRustProjectDescriptor::class)
 class RsProcMacroResolveTest : RsResolveTestBase() {
     // FIXME
@@ -300,8 +300,7 @@ class RsProcMacroResolveTest : RsResolveTestBase() {
     """)
 
     @UseNewResolve
-    fun `test resolve attribute macro by qualified path with re-export 1`() = expect<IllegalStateException> {
-    stubOnlyResolve("""
+    fun `test resolve attribute macro by qualified path with re-export 1`() = stubOnlyResolve("""
         //- dep-proc-macro/lib.rs
             #[proc_macro_attribute]
             pub fn example_proc_macro(attr: TokenStream, item: TokenStream) -> TokenStream { item }
@@ -312,11 +311,9 @@ class RsProcMacroResolveTest : RsResolveTestBase() {
                           //^ dep-proc-macro/lib.rs
             struct S;
     """)
-    }
 
     @UseNewResolve
-    fun `test resolve attribute macro by qualified path with re-export 2`() = expect<IllegalStateException> {
-    stubOnlyResolve("""
+    fun `test resolve attribute macro by qualified path with re-export 2`() = stubOnlyResolve("""
         //- dep-proc-macro/lib.rs
             #[proc_macro_attribute]
             pub fn example_proc_macro(attr: TokenStream, item: TokenStream) -> TokenStream { item }
@@ -329,7 +326,6 @@ class RsProcMacroResolveTest : RsResolveTestBase() {
                                //^ dep-proc-macro/lib.rs
             struct S;
     """)
-    }
 
     fun `test resolve bang proc macro from macro call through macro_use`() = stubOnlyResolve("""
         //- dep-proc-macro/lib.rs
