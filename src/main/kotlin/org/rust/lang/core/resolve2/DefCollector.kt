@@ -13,12 +13,10 @@ import org.rust.cargo.project.workspace.CargoWorkspaceData
 import org.rust.lang.core.crate.CratePersistentId
 import org.rust.lang.core.macros.*
 import org.rust.lang.core.macros.decl.MACRO_DOLLAR_CRATE_IDENTIFIER
-import org.rust.lang.core.psi.RsMacroBody
-import org.rust.lang.core.psi.RsProcMacroKind
-import org.rust.lang.core.psi.RsPsiFactory
+import org.rust.lang.core.psi.*
 import org.rust.lang.core.psi.ext.body
-import org.rust.lang.core.psi.rustFile
 import org.rust.lang.core.resolve.DEFAULT_RECURSION_LIMIT
+import org.rust.lang.core.resolve.Namespace
 import org.rust.lang.core.resolve2.ImportType.GLOB
 import org.rust.lang.core.resolve2.ImportType.NAMED
 import org.rust.lang.core.resolve2.PartialResolvedImport.*
@@ -284,17 +282,20 @@ class DefCollector(
     private fun tryExpandMacroCall(call: MacroCallInfo): Boolean {
         val def = defMap.resolveMacroCallToMacroDefInfo(call.containingMod, call.path, call.macroIndex)
             ?: return false
+
+        if (def is ProcMacroDefInfo && def.props.treatAsBuiltinAttr && call.originalItem != null) {
+            val (visItem, namespaces) = call.originalItem
+            call.containingMod.addVisibleItem(visItem.name, PerNs.from(visItem, namespaces))
+            return true
+        }
+
         val defData = RsMacroDataWithHash.fromDefInfo(def).ok()
             ?: return false
         val callData = RsMacroCallDataWithHash(RsMacroCallData(call.body, defMap.metaData.env), call.bodyHash)
         val (expandedFile, expansion) =
             macroExpanderShared.createExpansionStub(project, macroExpander, defData, callData) ?: return true
 
-        val dollarCrateHelper = if (def is DeclMacroDefInfo) {
-            createDollarCrateHelper(call, def, expansion)
-        } else {
-            null
-        }
+        val dollarCrateHelper = createDollarCrateHelper(call, def, expansion)
 
         val context = getModCollectorContextForExpandedElements(call) ?: return true
         collectExpandedElements(expandedFile, call, context, dollarCrateHelper)
@@ -304,7 +305,7 @@ class DefCollector(
     private fun expandIncludeMacroCall(call: MacroCallInfo) {
         val modData = call.containingMod
         val containingFile = PersistentFS.getInstance().findFileById(modData.fileId) ?: return
-        val includePath = call.body
+        val includePath = (call.body as? MacroCallBody.FunctionLike)?.text ?: return
         val parentDirectory = containingFile.parent
         val includingFile = parentDirectory.findFileByMaybeRelativePath(includePath)
         val includingRsFile = includingFile?.toPsiFile(project)?.rustFile
@@ -421,13 +422,14 @@ class ProcMacroDefInfo(
     override val path: ModPath,
     val procMacroKind: RsProcMacroKind,
     val procMacroArtifact: CargoWorkspaceData.ProcMacroArtifact?,
+    val props: KnownProcMacroProperties,
 ) : MacroDefInfo()
 
 class MacroCallInfo(
     val containingMod: ModData,
     val macroIndex: MacroIndex,
     val path: Array<String>,
-    val body: String,
+    val body: MacroCallBody,
     val bodyHash: HashCode?,  // null for `include!` macro
     val depth: Int,
     /**
@@ -435,6 +437,7 @@ class MacroCallInfo(
      * `dstOffset` - index of [MACRO_DOLLAR_CRATE_IDENTIFIER] in [body]
      */
     val dollarCrateMap: RangeMap = RangeMap.EMPTY,
+    val originalItem: Pair<VisItem, Set<Namespace>>? = null,
 ) {
     override fun toString(): String = "${containingMod.path}:  ${path.joinToString("::")}! { $body }"
 }

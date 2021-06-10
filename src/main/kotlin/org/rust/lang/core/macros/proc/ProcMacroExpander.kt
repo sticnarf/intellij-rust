@@ -9,6 +9,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.registry.Registry
 import org.rust.cargo.project.settings.toolchain
 import org.rust.cargo.toolchain.RsToolchainBase
+import com.intellij.util.SmartList
 import org.rust.lang.core.macros.*
 import org.rust.lang.core.macros.errors.ProcMacroExpansionError
 import org.rust.lang.core.macros.errors.ProcMacroExpansionError.ExecutableNotFound
@@ -37,20 +38,40 @@ class ProcMacroExpander(
         def: RsProcMacroData,
         call: RsMacroCallData
     ): RsResult<Pair<CharSequence, RangeMap>, ProcMacroExpansionError> {
-        val macroCallBodyText = call.macroBody
-        val env = call.packageEnv
+        val (macroCallBodyText, attrText) = when (val macroBody = call.macroBody) {
+            is MacroCallBody.Attribute -> macroBody.item to macroBody.attr
+            is MacroCallBody.Derive -> MappedText.single(macroBody.item, 0) to null
+            is MacroCallBody.FunctionLike -> MappedText.single(macroBody.text, 0) to null
+        }
         val (macroCallBodyLowered, rangesLowering) = project
-            .createRustPsiBuilder(macroCallBodyText)
+            .createRustPsiBuilder(macroCallBodyText.text)
             .lowerDocCommentsToPsiBuilder(project)
-        val (macroCallBodyTt, tokenMap) = macroCallBodyLowered.parseSubtree()
-        return expandMacroAsTtWithErr(macroCallBodyTt, def.name, def.artifact.path.toString(), env).map {
-            val (text, ranges) = MappedSubtree(it, tokenMap).toMappedText()
-            text to rangesLowering.mapAll(ranges)
+        val loweredMacroCallBodyRanges = macroCallBodyText.ranges.mapAll(rangesLowering)
+        val (macroCallBodyTt, macroCallBodyTokenMap) = macroCallBodyLowered.parseSubtree()
+
+        val (attrSubtree, mergedTokenMap, mergedRanges) = if (attrText != null) {
+            val startOffset = (loweredMacroCallBodyRanges.ranges.maxByOrNull { it.dstOffset }?.dstEndOffset ?: -1) + 1
+            val shiftedRanges = attrText.ranges.ranges.map { it.dstShiftRight(startOffset) }
+            val (subtree, map) = project.createRustPsiBuilder(attrText.text).parseSubtree(startOffset, macroCallBodyTokenMap.map.size)
+            Triple(
+                subtree.copy(delimiter = null),
+                macroCallBodyTokenMap.merge(map),
+                RangeMap.from(SmartList(loweredMacroCallBodyRanges.ranges + shiftedRanges))
+            )
+        } else {
+            Triple(null, macroCallBodyTokenMap, loweredMacroCallBodyRanges)
+        }
+        val lib = def.artifact.path.toString()
+        val env = call.packageEnv
+        return expandMacroAsTtWithErr(macroCallBodyTt, attrSubtree, def.name, lib, env).map {
+            val (text, ranges) = MappedSubtree(it, mergedTokenMap).toMappedText()
+            text to mergedRanges.mapAll(ranges)
         }
     }
 
     fun expandMacroAsTtWithErr(
         macroCallBody: TokenTree.Subtree,
+        attributes: TokenTree.Subtree?,
         macroName: String,
         lib: String,
         env: Map<String, String> = emptyMap()
@@ -59,7 +80,7 @@ class ProcMacroExpander(
         val server = server ?: return Err(if (isEnabled) ExecutableNotFound else ProcMacroExpansionIsDisabled)
         val envList = env.map { listOf(it.key, toolchain?.toRemotePath(it.value) ?: it.value) }
         val response = try {
-            server.send(Request.ExpansionMacro(macroCallBody, macroName, null, remoteLib, envList), timeout)
+            server.send(Request.ExpansionMacro(macroCallBody, macroName, attributes, remoteLib, envList), timeout)
         } catch (ignored: TimeoutException) {
             return Err(ProcMacroExpansionError.Timeout(timeout))
         } catch (e: ProcessCreationException) {

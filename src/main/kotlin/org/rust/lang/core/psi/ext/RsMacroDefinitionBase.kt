@@ -15,6 +15,7 @@ import org.rust.stdext.HashCode
 interface RsMacroDefinitionBase : RsNameIdentifierOwner,
                                   RsQualifiedNamedElement,
                                   RsExpandedElement,
+                                  RsAttrProcMacroOwner,
                                   RsModificationTrackerOwner {
     val macroBodyStubbed: RsMacroBody?
     val bodyHash: HashCode?

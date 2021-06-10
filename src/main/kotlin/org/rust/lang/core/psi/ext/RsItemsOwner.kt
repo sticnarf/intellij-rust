@@ -150,16 +150,26 @@ private fun RsItemsOwner.processExpandedItemsInternal(processor: (RsElement, Boo
 }
 
 private fun RsElement.processItem(processor: (RsElement, Boolean) -> Boolean): Boolean {
-    val isEnabledByCfgSelf = this !is RsDocAndAttributeOwner || this.existsAfterExpansionSelf
+    if (this is RsAttrProcMacroOwner) {
+        val attr = procMacroAttribute
+        if (attr is ProcMacroAttribute.Attr) {
+            if (!isEnabledByCfgSelf) return false
+            return attr.attr.expansion?.elements.orEmpty().any {
+                it.processItem(processor)
+            }
+        }
+    }
+
+    val existsAfterExpansionSelf = this !is RsDocAndAttributeOwner || this.existsAfterExpansionSelf
 
     return when (this) {
         is RsMacroCall -> {
-            if (!isEnabledByCfgSelf) return false
+            if (!existsAfterExpansionSelf) return false
             processExpansionRecursively {
-                it is RsDocAndAttributeOwner && processor(it, it.existsAfterExpansionSelf)
+                it.processItem(processor)
             }
         }
-        is RsItemElement, is RsMacro -> processor(this, isEnabledByCfgSelf)
+        is RsItemElement, is RsMacro -> processor(this, existsAfterExpansionSelf)
         else -> false
     }
 }
