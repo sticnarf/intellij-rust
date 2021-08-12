@@ -27,6 +27,8 @@ import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
+import com.intellij.openapiext.isUnitTestMode
+import com.intellij.util.containers.orNull
 import com.intellij.util.io.exists
 import com.intellij.util.text.SemVer
 import org.rust.RsTask
@@ -49,7 +51,9 @@ import org.rust.cargo.util.DownloadResult
 import org.rust.openapiext.TaskResult
 import org.rust.stdext.mapNotNullToSet
 import java.nio.file.Path
+import java.util.*
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
 import javax.swing.JComponent
 
 class CargoSyncTask(
@@ -294,11 +298,11 @@ private fun fetchRustcInfo(context: CargoSyncTask.SyncContext): TaskResult<Rustc
         }
 
         val workingDirectory = childContext.oldCargoProject.workingDirectory
-        val sysroot = childContext.toolchain.rustc().getSysroot(workingDirectory)
-            ?: return@runWithChildProgress TaskResult.Err("failed to get project sysroot")
 
         val rustcVersion = childContext.toolchain.rustc().queryVersion(workingDirectory)
-        val rustcTargets = childContext.toolchain.rustc().getTargets(workingDirectory)
+        val sysroot = UnitTestRustcCache.cached(rustcVersion) { childContext.toolchain.rustc().getSysroot(workingDirectory) }
+            ?: return@runWithChildProgress TaskResult.Err("failed to get project sysroot")
+        val rustcTargets = UnitTestRustcCache.cached(rustcVersion) { childContext.toolchain.rustc().getTargets(workingDirectory) }
 
         TaskResult.Ok(RustcInfo(sysroot, rustcVersion, rustcTargets))
     }
@@ -327,7 +331,9 @@ private fun fetchCargoWorkspace(context: CargoSyncTask.SyncContext, rustcInfo: R
             val manifestPath = projectDirectory.resolve("Cargo.toml")
 
             val cfgOptions = try {
-                cargo.getCfgOption(childContext.project, projectDirectory)
+                 UnitTestRustcCache.cached(rustcInfo?.version, cacheIf = { !projectDirectory.resolve(".cargo").exists() }) {
+                     cargo.getCfgOption(childContext.project, projectDirectory)
+                 }
             } catch (e: ExecutionException) {
                 val rustcVersion = rustcInfo?.version?.semver
                 if (rustcVersion == null || rustcVersion > RUST_1_51) {
@@ -386,7 +392,7 @@ private fun fetchStdlib(context: CargoSyncTask.SyncContext, cargoProject: CargoP
 
 
 private fun Rustup.fetchStdlib(project: Project, rustcInfo: RustcInfo?): TaskResult<StandardLibrary> {
-    return when (val download = downloadStdlib()) {
+    return when (val download = UnitTestRustcCache.cached(rustcInfo?.version) { downloadStdlib() }) {
         is DownloadResult.Ok -> {
             val lib = StandardLibrary.fromFile(project, download.value, rustcInfo)
             if (lib == null) {
@@ -418,6 +424,27 @@ private fun <T, R> BuildProgress<BuildProgressDescriptor>.runWithChildProgress(
             fail()
         }
         throw e
+    }
+}
+
+/**
+ * This cache is really used *only* in unit tests.
+ *
+ * We assume that `sysroot`, a `list of targets`, `--print cfg` and `stdlib`
+ * are not changed until the version of rustc is changed, so we can cache these values for all tests.
+ * The cache significantly speeds up heavy tests with a full toolchain (`RsWithToolchainTestBase`)
+ */
+private object UnitTestRustcCache {
+    private val cache: ConcurrentHashMap<Pair<RustcVersion, Class<*>>, Optional<Any>> = ConcurrentHashMap()
+
+    inline fun <reified T> cached(rustcVersion: RustcVersion?, cacheIf: () -> Boolean = { true }, noinline computation: () -> T): T {
+        if (!isUnitTestMode || rustcVersion == null || !cacheIf()) return computation()
+        return cachedInner(rustcVersion, T::class.java, computation)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    fun <T> cachedInner(rustcVersion: RustcVersion, cls: Class<T>, computation: () -> T): T {
+        return cache.getOrPut(rustcVersion to cls) { Optional.ofNullable(computation()) }.orNull() as T
     }
 }
 
