@@ -151,12 +151,20 @@ private fun RsItemsOwner.processExpandedItemsInternal(processor: (RsElement, Boo
 
 private fun RsElement.processItem(processor: (RsElement, Boolean) -> Boolean): Boolean {
     if (this is RsAttrProcMacroOwner) {
-        val attr = procMacroAttribute
-        if (attr is ProcMacroAttribute.Attr) {
-            if (!isEnabledByCfgSelf) return false
-            return attr.attr.expansion?.elements.orEmpty().any {
-                it.processItem(processor)
+        when (val attr = procMacroAttributeWithDerives) {
+            is ProcMacroAttribute.Attr -> {
+                if (!isEnabledByCfgSelf) return false
+                return attr.attr.expansion?.elements.orEmpty().any {
+                    it.processItem(processor)
+                }
             }
+            is ProcMacroAttribute.Derive -> for (derive in attr.derives) {
+                val result = derive.expansion?.elements.orEmpty().any {
+                    it.processItem(processor)
+                }
+                if (result) return true
+            }
+            ProcMacroAttribute.None -> Unit
         }
     }
 

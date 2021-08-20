@@ -139,7 +139,7 @@ private fun doPrepareProcMacroCallBody(
                 ?: return null
             PreparedProcMacroCallBody.Attribute(body, attr)
         }
-        ProcMacroAttribute.Derive -> {
+        is ProcMacroAttribute.Derive -> {
             val crate = explicitCrate ?: owner.containingCrate ?: return null
             val body = doPrepareCustomDeriveMacroCallBody(project, text, endOfAttrsOffset, crate) ?: return null
             PreparedProcMacroCallBody.Derive(body)
@@ -163,7 +163,7 @@ private sealed class PreparedProcMacroCallBody {
  * Does things that Rustc does before passing a body to a **custom derive** proc macro:
  * removes `cfg` and `derive` attributes, unwraps `cfg_attr` attributes, moves docs before other attributes.
  */
-private fun doPrepareCustomDeriveMacroCallBody(
+fun doPrepareCustomDeriveMacroCallBody(
     project: Project,
     text: String,
     endOfAttrsOffset: Int,

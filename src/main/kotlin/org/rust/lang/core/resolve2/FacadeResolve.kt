@@ -10,6 +10,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFileWithId
 import com.intellij.openapi.vfs.newvfs.persistent.PersistentFS
 import com.intellij.psi.PsiElement
+import com.intellij.psi.PsiFile
 import com.intellij.psi.StubBasedPsiElement
 import org.rust.cargo.project.settings.rustSettings
 import org.rust.cargo.project.workspace.PackageOrigin
@@ -301,7 +302,7 @@ fun RsMetaItem.resolveToProcMacroWithoutPsiUnchecked(checkIsMacroAttr: Boolean):
     if (checkIsMacroAttr) {
         val ok = when (val attr = ProcMacroAttribute.getProcMacroAttributeRaw(owner)) {
             is ProcMacroAttribute.Attr -> attr.attr == this
-            ProcMacroAttribute.Derive -> RsProcMacroPsiUtil.canBeCustomDerive(this)
+            is ProcMacroAttribute.Derive -> RsProcMacroPsiUtil.canBeCustomDerive(this)
             ProcMacroAttribute.None -> false
         }
         if (!ok) return null
@@ -338,39 +339,93 @@ private fun RsMacroCall.resolveToMacroDefInfo(containingModInfo: RsModInfo): Mac
         }
 }
 
-private fun getMacroIndex(element: PsiElement, defMap: CrateDefMap, crate: Crate): MacroIndex? {
+private fun getMacroIndex(element: PsiElement, defMap: CrateDefMap, crate: Crate): MacroIndex? =
+    getMacroIndex(AnItem.of(element), defMap, crate)
+
+private fun getMacroIndex(element: AnItem, defMap: CrateDefMap, crate: Crate): MacroIndex? {
     val itemAndCallExpandedFrom = element.stubAncestors
-        .filterIsInstance<RsExpandedElement>()
-        .mapNotNull { it to (it.expandedOrIncludedFrom ?: return@mapNotNull null) }
+        .filter { it.item is RsExpandedElement }
+        .mapNotNull { it to ((it.item as RsExpandedElement).expandedOrIncludedFrom ?: return@mapNotNull null) }
         .firstOrNull()
     if (itemAndCallExpandedFrom == null) {
-        if (element.containingFile is RsCodeFragment) return MacroIndex(intArrayOf(Int.MAX_VALUE))
-        val (item, parent) = element.ancestorPairs.first { (_, parent) -> parent is RsMod }
-        val modData = defMap.getModData(parent as RsMod) ?: return null
-        val indexInParent = getMacroIndexInParent(item, parent, crate)
+        if (element.item.containingFile is RsCodeFragment) return MacroIndex(intArrayOf(Int.MAX_VALUE))
+        val (item, parent) = element.ancestorPairs.first { (_, parent) -> parent.item is RsMod }
+        val modData = defMap.getModData(parent.item as RsMod) ?: return null
+        val indexInParent = getMacroIndexInParent(item, parent.item as RsMod, crate)
         return modData.macroIndex.append(indexInParent)
     } else {
         val (item, callExpandedFrom) = itemAndCallExpandedFrom
-        val parent = item.parent
+        val parent = item.item.parent
         // TODO: Possible optimization - store macro index in [resolveToMacroDefInfo] cache
-        val parentIndex = getMacroIndex(callExpandedFrom, defMap, crate) ?: return null
+        val parentIndex = getMacroIndex(AnItem.of(callExpandedFrom), defMap, crate) ?: return null
         if (parent !is RsMod) return parentIndex  // not top level expansion
         val indexInParent = getMacroIndexInParent(item, parent, crate)
         return parentIndex.append(indexInParent)
     }
 }
 
-private fun getMacroIndexInParent(item: PsiElement, parent: PsiElement, crate: Crate): Int {
-    val itemStub = (item as? StubBasedPsiElement<*>)?.greenStub
+private sealed class AnItem {
+    abstract val item: PsiElement
+
+    class SimpleItem(override val item: PsiElement) : AnItem()
+    class DeriveMetaItem(override val item: RsAttrProcMacroOwner, val meta: RsMetaItem) : AnItem()
+
+    companion object {
+        fun of(element: PsiElement): AnItem {
+            return if (element is RsMetaItem) {
+                val owner = element.owner as? RsAttrProcMacroOwner ?: return AnItem.SimpleItem(element)
+                if (RsProcMacroPsiUtil.canBeCustomDerive(element)) {
+                    AnItem.DeriveMetaItem(owner, element)
+                } else {
+                    AnItem.SimpleItem(owner)
+                }
+            } else {
+                AnItem.SimpleItem(element)
+            }
+        }
+    }
+}
+
+private val AnItem.ancestorPairs: Sequence<Pair<AnItem, AnItem>>
+    get() {
+        val parent = parent() ?: return emptySequence()
+        return generateSequence(Pair(this, parent)) { (_, parent) ->
+            val grandPa = parent.parent()
+            if (parent.item is PsiFile || grandPa == null) null else parent to grandPa
+        }
+    }
+
+private fun AnItem.parent(): AnItem? {
+    val parent = item.stubParent ?: return null
+    return AnItem.of(parent)
+}
+
+private val AnItem.stubAncestors: Sequence<AnItem>
+    get() = generateSequence(this) {
+        if (it.item is PsiFile) null else it.parent()
+    }
+
+private fun getMacroIndexInParent(item: AnItem, parent: RsMod, crate: Crate): Int {
+    val itemStub = (item.item as? StubBasedPsiElement<*>)?.greenStub
     val parentStub = if (parent is PsiFileBase) parent.greenStub else (parent as? StubBasedPsiElement<*>)?.greenStub
-    return if (itemStub != null && parentStub != null) {
+    val baseIndex = if (itemStub != null && parentStub != null) {
         parentStub.childrenStubs.asSequence()
             .takeWhile { it !== itemStub }
-            .count { it.hasMacroIndex(crate) }
+            .sumOf { it.hasMacroIndex(crate) }
     } else {
         parent.children.asSequence()
-            .takeWhile { it !== item }
-            .count { it.hasMacroIndex(crate) }
+            .takeWhile { it !== item.item }
+            .sumOf { it.hasMacroIndex(crate) }
+    }
+
+    return baseIndex + if (item is AnItem.DeriveMetaItem) {
+        val index = when (val attr = ProcMacroAttribute.getProcMacroAttribute(item.item, explicitCrate = crate, withDerives = true)) {
+            is ProcMacroAttribute.Derive -> attr.derives.indexOf(item.meta)
+            else -> 0
+        }
+        if (index == -1) 0 else index
+    } else {
+        0
     }
 }
 

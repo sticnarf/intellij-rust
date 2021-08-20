@@ -86,9 +86,8 @@ sealed class ProcMacroAttribute<out T : RsMetaItemPsiOrStub> {
     }
 
     /** The item has no attribute procedural macros, but may have custom derive attributes */
-    object Derive : ProcMacroAttribute<Nothing>() {
+    class Derive<T : RsMetaItemPsiOrStub>(val derives: Sequence<T>): ProcMacroAttribute<T>() {
         override val attr: Nothing? get() = null
-        override fun toString(): String = "Derive"
     }
 
     /**
@@ -105,6 +104,7 @@ sealed class ProcMacroAttribute<out T : RsMetaItemPsiOrStub> {
 
     companion object {
         /**
+         * TODO comment
          *
          * Can't be after derive:
          *
@@ -121,20 +121,41 @@ sealed class ProcMacroAttribute<out T : RsMetaItemPsiOrStub> {
             owner: RsAttrProcMacroOwnerPsiOrStub<T>,
             stub: RsAttributeOwnerStub? = if (owner is RsDocAndAttributeOwner) owner.attributeStub else owner as RsAttributeOwnerStub,
             explicitCrate: Crate? = null,
+            withDerives: Boolean = false,
             explicitCustomAttributes: CustomAttributes? = null,
         ): ProcMacroAttribute<T> {
             if (!ProcMacroApplicationService.isEnabled()) return None
             if (stub != null) {
                 if (!stub.mayHaveCustomAttrs) {
-                    return if (stub.mayHaveCustomDerive) Derive else None
+                    return if (stub.mayHaveCustomDerive && RsProcMacroPsiUtil.canOwnDeriveAttrs(owner)) {
+                        if (withDerives) {
+                            val queryAttributes = owner.getQueryAttributes(explicitCrate, stub, fromOuterAttrsOnly = true)
+                            Derive(queryAttributes.customDeriveMetaItems)
+                        } else {
+                            Derive(emptySequence())
+                        }
+                    } else {
+                        None
+                    }
                 }
             }
 
             val crate = explicitCrate ?: owner.containingCrate ?: return None
             val customAttributes = explicitCustomAttributes ?: CustomAttributes.fromCrate(crate)
 
-            owner.getQueryAttributes(crate, stub, fromOuterAttrsOnly = true).metaItems.forEachIndexed { index, meta ->
-                if (meta.name == "derive") return Derive
+            val queryAttributes = owner.getQueryAttributes(crate, stub, fromOuterAttrsOnly = true)
+            queryAttributes.metaItems.forEachIndexed { index, meta ->
+                if (meta.name == "derive") {
+                    return if (RsProcMacroPsiUtil.canOwnDeriveAttrs(owner)) {
+                        if (withDerives) {
+                            Derive(queryAttributes.customDeriveMetaItems)
+                        } else {
+                            Derive(emptySequence())
+                        }
+                    } else {
+                        None
+                    }
+                }
                 if (RsProcMacroPsiUtil.canBeProcMacroAttributeCallWithoutContextCheck(meta, customAttributes)) {
                     return Attr(meta, index)
                 }
@@ -146,10 +167,11 @@ sealed class ProcMacroAttribute<out T : RsMetaItemPsiOrStub> {
             owner: RsAttrProcMacroOwner,
             stub: RsAttributeOwnerStub? = owner.attributeStub,
             explicitCrate: Crate? = null,
+            withDerives: Boolean = false,
         ): ProcMacroAttribute<RsMetaItem> {
-            return when (val attr = getProcMacroAttributeRaw(owner, stub, explicitCrate)) {
-                Derive -> Derive
+            return when (val attr = getProcMacroAttributeRaw(owner, stub, explicitCrate, withDerives)) {
                 None -> None
+                is Derive -> attr
                 is Attr -> {
                     val props = attr.attr.resolveToProcMacroWithoutPsiUnchecked(checkIsMacroAttr = false)?.props
                     if (props != null && props.treatAsBuiltinAttr && RsProcMacroPsiUtil.canFallbackItem(owner)) {
