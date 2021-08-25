@@ -91,7 +91,7 @@ interface RsTask {
 }
 
 /** Inspired by [BackgroundTaskQueue] */
-private class RsBackgroundTaskQueue {
+class RsBackgroundTaskQueue {
     private val processor = QueueProcessor(
         QueueConsumer(),
         true,

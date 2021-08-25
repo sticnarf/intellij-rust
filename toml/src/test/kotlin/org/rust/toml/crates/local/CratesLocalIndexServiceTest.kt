@@ -54,7 +54,7 @@ class CratesLocalIndexServiceTest : BasePlatformTestCase() {
     companion object {
         private val cratesService: CratesLocalIndexService by lazy {
             CratesLocalIndexServiceImpl().apply {
-                updateIfNeeded()
+                recoverIfNeeded()
             }
         }
     }
