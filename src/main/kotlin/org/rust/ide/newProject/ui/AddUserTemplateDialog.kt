@@ -26,7 +26,7 @@ class AddUserTemplateDialog : DialogWrapper(null) {
     private val nameField: JBTextField = JBTextField()
 
     init {
-        title = "Add a Custom Template"
+        title = "Add Custom Template"
         setOKButtonText("Add")
         init()
     }
@@ -35,7 +35,7 @@ class AddUserTemplateDialog : DialogWrapper(null) {
 
     override fun createCenterPanel(): JComponent = panel {
         row("Template URL:") {
-            repoUrlField(comment = "A git repository URL to generate from")
+            repoUrlField(comment = """cargo-generate supported template. <a href="https://github.com/cargo-generate/cargo-generate/blob/master/TEMPLATES.md">Available templates</a>""")
         }
         row("Name:") {
             nameField()
