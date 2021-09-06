@@ -26,11 +26,11 @@ class RsImportOptimizer : ImportOptimizer {
         if (document != null) {
             documentManager.commitDocument(document)
         }
-        executeForUseItem(file as RsFile)
-        executeForExternCrate(file)
+        optimizeAndReoderUseItems(file as RsFile)
+        reorderExternCrates(file)
     }
 
-    private fun executeForExternCrate(file: RsFile) {
+    private fun reorderExternCrates(file: RsFile) {
         val first = file.childrenOfType<RsElement>()
             .firstOrNull { it !is RsInnerAttr } ?: return
         val externCrateItems = file.childrenOfType<RsExternCrateItem>()
@@ -42,16 +42,33 @@ class RsImportOptimizer : ImportOptimizer {
         externCrateItems.forEach { it.delete() }
     }
 
-    fun executeForUseItem(mod: RsMod) {
+    private fun optimizeAndReoderUseItems(mod: RsMod) {
         val uses = mod.childrenOfType<RsUseItem>()
         if (uses.isNotEmpty()) {
             replaceOrderOfUseItems(mod, uses)
         }
         val mods = mod.childrenOfType<RsMod>()
-        mods.forEach { executeForUseItem(it) }
+        mods.forEach { optimizeAndReoderUseItems(it) }
+    }
+
+    fun optimizeUseItems(mod: RsMod) {
+        val psiFactory = RsPsiFactory(mod.project)
+        val uses = mod.childrenOfType<RsUseItem>()
+        uses.forEach { optimizeUseItem(psiFactory, it) }
+        val mods = mod.childrenOfType<RsMod>()
+        mods.forEach { optimizeUseItems(it) }
     }
 
     companion object {
+
+        fun optimizeUseItem(psiFactory: RsPsiFactory, useItem: RsUseItem) {
+            val useSpeck = useItem.useSpeck ?: return
+            val used = optimizeUseSpeck(psiFactory, useSpeck)
+            if (!used) {
+                (useItem.nextSibling as? PsiWhiteSpace)?.delete()
+                useItem.delete()
+            }
+        }
 
         /** Returns false if [useSpeck] is empty and should be removed */
         fun optimizeUseSpeck(psiFactory: RsPsiFactory, useSpeck: RsUseSpeck): Boolean {
