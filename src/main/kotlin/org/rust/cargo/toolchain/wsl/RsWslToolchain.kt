@@ -13,6 +13,8 @@ import com.intellij.execution.wsl.WslPath
 import com.intellij.util.io.isFile
 import com.intellij.util.io.systemIndependentPath
 import org.rust.cargo.toolchain.RsToolchainBase
+import org.rust.ide.experiments.RsExperiments
+import org.rust.openapiext.isFeatureEnabled
 import org.rust.stdext.toPath
 import java.io.File
 import java.nio.file.Path
@@ -73,6 +75,12 @@ class RsWslToolchain(
         distribution.getWindowsPath(pathToCargoExecutable(exec)).isFile()
 
     companion object {
+        val isWslEnabled: Boolean
+            get() {
+                if (!WSLUtil.isSystemCompatible()) return false
+                return isFeatureEnabled(RsExperiments.WSL_TOOLCHAIN) ||
+                    System.getenv("CI_WSL_DISTRO") != null
+            }
 
         private fun WSLDistribution.getWindowsPathWithFix(wslPath: String): String =
             when {
