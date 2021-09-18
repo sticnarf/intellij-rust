@@ -6,6 +6,7 @@
 package org.rust.lang.core.psi
 
 
+// Bump `RsFileStub.Type.STUB_VERSION` if modified
 // https://github.com/rust-lang/rust/blob/1c07096a45a15de64216f12ec726333870e372b1/compiler/rustc_feature/src/builtin_attrs.rs#L172
 val RS_BUILTIN_ATTRIBUTES: Set<String> = setOf(
     "cfg",
@@ -150,6 +151,11 @@ val RS_BUILTIN_ATTRIBUTES: Set<String> = setOf(
     "rustc_dump_vtable",
     "rustc_dummy",
     "omit_gdb_pretty_printer_section",
+
+    // Internal stdlib proc macros
+
+    "simd_test",
+    "assert_instr",
 
     // Proc macros from stdlib. Defined like
     // `pub macro test($item:item) {}`

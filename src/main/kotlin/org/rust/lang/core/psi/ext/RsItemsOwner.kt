@@ -15,6 +15,7 @@ import gnu.trove.THashMap
 import org.rust.lang.core.psi.*
 import org.rust.lang.core.psi.ext.RsCachedItems.CachedNamedImport
 import org.rust.lang.core.psi.ext.RsCachedItems.CachedStarImport
+import org.rust.lang.utils.evaluation.ThreeValuedLogic
 import org.rust.openapiext.testAssert
 import org.rust.stdext.optimizeList
 import org.rust.stdext.replaceTrivialMap
@@ -160,7 +161,7 @@ private fun RsElement.processItem(processor: (RsElement, Boolean) -> Boolean): B
         }
     }
 
-    val existsAfterExpansionSelf = this !is RsDocAndAttributeOwner || this.existsAfterExpansionSelf
+    val existsAfterExpansionSelf = this !is RsDocAndAttributeOwner || evaluateCfg() != ThreeValuedLogic.False
 
     return when (this) {
         is RsMacroCall -> {

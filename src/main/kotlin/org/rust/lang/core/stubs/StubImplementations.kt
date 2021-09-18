@@ -22,6 +22,7 @@ import com.intellij.util.CharTable
 import com.intellij.util.diff.FlyweightCapableTreeStructure
 import com.intellij.util.io.DataInputOutputUtil.readNullable
 import com.intellij.util.io.DataInputOutputUtil.writeNullable
+import org.jetbrains.annotations.VisibleForTesting
 import org.rust.lang.RsLanguage
 import org.rust.lang.core.lexer.RsLexer
 import org.rust.lang.core.parser.RustParser
@@ -368,7 +369,8 @@ abstract class RsAttrProcMacroOwnerStubBase<T : RsElement>(
     override val endOfAttrsOffset: Int get() = procMacroInfo?.endOfAttrsOffset ?: 0
     override val startOffset: Int get() = procMacroInfo?.startOffset ?: 0
 
-    protected abstract val procMacroInfo: RsProcMacroStubInfo?
+    @get:VisibleForTesting
+    abstract val procMacroInfo: RsProcMacroStubInfo?
 }
 
 class RsExternCrateItemStub(

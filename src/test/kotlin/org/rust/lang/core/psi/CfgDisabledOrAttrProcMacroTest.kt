@@ -63,7 +63,7 @@ class CfgDisabledOrAttrProcMacroTest : RsTestBase() {
         mod foo {
             #[cfg(not(intellij_rust))]
             mod bar {
-                //^ PROC_MACRO
+                //^ ATTR_PROC_MACRO_CALL
             }
         }
     """)

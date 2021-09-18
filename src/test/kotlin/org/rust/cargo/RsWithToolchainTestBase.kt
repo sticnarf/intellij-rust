@@ -93,6 +93,10 @@ abstract class RsWithToolchainTestBase : CodeInsightFixtureTestCase<ModuleFixtur
         }
         // RsExperiments.FETCH_ACTUAL_STDLIB_METADATA significantly slows down tests
         setExperimentalFeatureEnabled(RsExperiments.FETCH_ACTUAL_STDLIB_METADATA, fetchActualStdlibMetadata, testRootDisposable)
+
+        for (feature in findAnnotationInstance<WithExperimentalFeatures>()?.features.orEmpty()) {
+            setExperimentalFeatureEnabled(feature, true, testRootDisposable)
+        }
     }
 
     override fun tearDown() {

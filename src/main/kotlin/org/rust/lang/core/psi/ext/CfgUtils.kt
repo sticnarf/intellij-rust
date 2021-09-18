@@ -43,7 +43,7 @@ val PsiElement.isCfgUnknown: Boolean
     get() = ancestors.filterIsInstance<RsDocAndAttributeOwner>().any { it.isCfgUnknownSelf }
 
 fun PsiElement.getCodeStatus(crate: Crate?): CfgDisabledOrAttrProcMacro {
-    for ((it, cameFrom) in ancestors.withPrevious().toList().asReversed()) {
+    for ((it, cameFrom) in stubAncestors.withPrevious().toList().asReversed()) {
         when (it) {
             is RsDocAndAttributeOwner -> {
                 when (it.evaluateCfg(crate)) {
