@@ -9,6 +9,7 @@ import com.intellij.execution.DefaultExecutionResult
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.configurations.RunProfile
 import com.intellij.execution.configurations.RunProfileState
+import com.intellij.execution.executors.DefaultDebugExecutor
 import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.runners.showRunContent
 import com.intellij.execution.ui.RunContentDescriptor
@@ -95,7 +96,7 @@ abstract class RsExecutableRunner(
             executableArguments,
             runCargoCommand.emulateTerminal,
             runCargoCommand.withSudo,
-            patchToRemote = false // patching is performed for debugger/profiler/valgrind on CLion side if needed
+            patchToRemote = executorId != DefaultDebugExecutor.EXECUTOR_ID
         )
 
         return showRunContent(state, environment, runExecutable)

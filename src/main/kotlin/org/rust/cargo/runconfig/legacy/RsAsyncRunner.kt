@@ -11,6 +11,7 @@ import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.configurations.RunProfile
 import com.intellij.execution.configurations.RunProfileState
 import com.intellij.execution.configurations.RunnerSettings
+import com.intellij.execution.executors.DefaultDebugExecutor
 import com.intellij.execution.process.CapturingProcessAdapter
 import com.intellij.execution.process.ProcessOutput
 import com.intellij.execution.runners.AsyncProgramRunner
@@ -84,7 +85,7 @@ abstract class RsAsyncRunner(
                     executableArguments,
                     emulateTerminal,
                     withSudo,
-                    patchToRemote = false // patching is performed for debugger/profiler/valgrind on CLion side if needed
+                    patchToRemote = executorId != DefaultDebugExecutor.EXECUTOR_ID
                 )
             }
         }
