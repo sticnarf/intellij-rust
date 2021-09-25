@@ -194,4 +194,11 @@ class RsRedundantElseInspectionTest : RsInspectionsTestBase(RsRedundantElseInspe
             }
         }
     """)
+
+    fun `test let else`() = checkByText("""
+        fn main() {
+            let x = Some(0) <warning descr="Redundant `else`">else</warning> { return };
+            let Some(x) = Some(0) else { return };
+        }
+    """)
 }
