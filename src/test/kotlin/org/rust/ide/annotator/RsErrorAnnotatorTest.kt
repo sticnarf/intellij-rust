@@ -7,6 +7,7 @@ package org.rust.ide.annotator
 
 import org.rust.*
 import org.rust.cargo.project.workspace.CargoWorkspace
+import org.rust.ide.experiments.RsExperiments
 
 class RsErrorAnnotatorTest : RsAnnotatorTestBase(RsErrorAnnotator::class) {
 
@@ -3134,6 +3135,32 @@ class RsErrorAnnotatorTest : RsAnnotatorTestBase(RsErrorAnnotator::class) {
                 b: u16,
             } = 1,
         }
+    """)
+
+    @MockRustcVersion("1.56.0-nightly")
+    @WithExperimentalFeatures(RsExperiments.EVALUATE_BUILD_SCRIPTS, RsExperiments.PROC_MACROS)
+    fun `test non-structural match type as const generic parameter E0741`() = checkErrors("""
+        #![feature(adt_const_params)]
+        struct A;
+        #[derive(PartialEq)]
+        struct B;
+        #[derive(Eq)]
+        struct C;
+        #[derive(PartialEq, Eq)]
+        struct D;
+        struct S<
+            const P1: A,
+            const P2: B,
+            const P3: C,
+            const P4: D
+        >;
+    """)
+
+    @MockRustcVersion("1.56.0-nightly")
+    fun `test non-structural match type as const generic parameter E0741 (proc macros are disabled)`() = checkErrors("""
+        #![feature(adt_const_params)]
+        struct A;
+        struct S<const P: A>;
     """)
 
     @MockRustcVersion("1.37.0-nightly")
