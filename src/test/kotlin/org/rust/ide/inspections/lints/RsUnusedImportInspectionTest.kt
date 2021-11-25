@@ -12,7 +12,6 @@ import org.rust.ide.experiments.RsExperiments
 import org.rust.ide.inspections.RsInspectionsTestBase
 import org.rust.lang.core.macros.MacroExpansionScope
 
-@UseNewResolve
 class RsUnusedImportInspectionTest : RsInspectionsTestBase(RsUnusedImportInspection::class) {
     fun `test unused import`() = checkByText("""
         mod foo {
@@ -471,6 +470,21 @@ class RsUnusedImportInspectionTest : RsInspectionsTestBase(RsUnusedImportInspect
             use crate::Bar;
             #[derive(DeriveImplForFoo)]
             struct Foo;
+        }
+    """)
+
+    @MinRustcVersion("1.46.0")
+    @MockEdition(CargoWorkspace.Edition.EDITION_2018)
+    @ExpandMacros(MacroExpansionScope.WORKSPACE)
+    @WithExperimentalFeatures(RsExperiments.EVALUATE_BUILD_SCRIPTS, RsExperiments.PROC_MACROS)
+    @ProjectDescriptor(WithProcMacroRustProjectDescriptor::class)
+    fun `test usage inside attribute proc macro expansion`() = checkByText("""
+        struct Foo;
+        mod foo {
+            use test_proc_macros::attr_replace_with_attr;
+            use crate::Foo;
+            #[attr_replace_with_attr(fn bar(_: Foo) {})]
+            fn func() {}
         }
     """)
 

@@ -31,6 +31,9 @@ import org.rust.lang.core.resolve2.util.SmartListMap
 import org.rust.openapiext.fileId
 import org.rust.openapiext.testAssert
 import org.rust.stdext.HashCode
+import org.rust.stdext.writeVarInt
+import java.io.DataOutput
+import java.io.IOException
 import java.nio.file.Path
 import java.util.*
 
@@ -110,10 +113,8 @@ class CrateDefMap(
     fun getModData(mod: RsMod): ModData? {
         if (mod is RsFile) {
             val virtualFile = mod.originalFile.virtualFile ?: return null
+            if (virtualFile !is VirtualFileWithId) return null
             val fileInfo = fileInfos[virtualFile.fileId]
-            // TODO: Exception here does not fail [RsBuildDefMapTest]
-            // Note: we don't expand cfg-disabled macros (it can contain mod declaration)
-            testAssert({ fileInfo != null || !mod.isDeeplyEnabledByCfg }, { "todo" })
             return fileInfo?.modData
         }
         val parentMod = mod.`super` ?: return null
@@ -217,8 +218,17 @@ class FileInfo(
 @Suppress("EXPERIMENTAL_FEATURE_WARNING")
 inline class MacroIndex(private val indices: IntArray) : Comparable<MacroIndex> {
     fun append(index: Int): MacroIndex = MacroIndex(indices + index)
+    fun append(index: MacroIndex): MacroIndex = MacroIndex(indices + index.indices)
 
     override fun compareTo(other: MacroIndex): Int = Arrays.compare(indices, other.indices)
+
+    @Throws(IOException::class)
+    fun writeTo(data: DataOutput) {
+        data.writeVarInt(indices.size)
+        for (index in indices) {
+            data.writeVarInt(index)
+        }
+    }
 
     companion object {
         /** Equivalent to `call < mod && !isPrefix(call, mod)` */
@@ -253,7 +263,7 @@ class ModData(
     val isDeeplyEnabledByCfgOuter: Boolean,
     val isEnabledByCfgInner: Boolean,
     /** id of containing file */
-    val fileId: FileId,
+    val fileId: FileId?,
     // TODO: Possible optimization - store as Array<String>
     /** Starts with :: */
     val fileRelativePath: String,
@@ -262,6 +272,8 @@ class ModData(
     val hasPathAttribute: Boolean,
     val hasMacroUse: Boolean,
     val isEnum: Boolean = false,
+    /** Normal cargo crate with physical crate root, etc */
+    val isNormalCrate: Boolean = true,
     /** Only for debug */
     val crateDescription: String,
 ) {
@@ -307,7 +319,11 @@ class ModData(
 
     lateinit var asVisItem: VisItem
 
-    var directoryContainedAllChildFiles: FileId = ownedDirectoryId ?: parent!!.directoryContainedAllChildFiles
+    var directoryContainedAllChildFiles: FileId? = if (isNormalCrate) {
+        ownedDirectoryId ?: parent!!.directoryContainedAllChildFiles
+    } else {
+        null
+    }
 
     /**
      * Means that mod declaration has path attribute or any parent inline mod
@@ -378,7 +394,7 @@ class ModData(
         val persistentFS = PersistentFS.getInstance()
         val childFile = persistentFS.findFileById(childFileId) ?: return
         val childDirectory = childFile.parent ?: return
-        val containedDirectory = persistentFS.findFileById(directoryContainedAllChildFiles) ?: return
+        val containedDirectory = persistentFS.findFileById(directoryContainedAllChildFiles ?: return) ?: return
         if (!VfsUtil.isAncestor(containedDirectory, childDirectory, false)) {
             VfsUtil.getCommonAncestor(containedDirectory, childDirectory)?.let {
                 directoryContainedAllChildFiles = it.fileId

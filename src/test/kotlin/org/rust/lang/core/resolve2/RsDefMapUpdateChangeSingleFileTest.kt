@@ -11,10 +11,8 @@ import com.intellij.psi.PsiDocumentManager
 import org.intellij.lang.annotations.Language
 import org.rust.ExpandMacros
 import org.rust.MockAdditionalCfgOptions
-import org.rust.UseNewResolve
 
-/** Tests whether or not [CrateDefMap] should be updated after file modification */
-@UseNewResolve
+/** Tests whether [CrateDefMap] should be updated after file modification */
 @ExpandMacros  // needed to enable precise modification tracker
 class RsDefMapUpdateChangeSingleFileTest : RsDefMapUpdateTestBase() {
 
@@ -386,6 +384,22 @@ class RsDefMapUpdateChangeSingleFileTest : RsDefMapUpdateTestBase() {
     fun `test add file level cfg attribute`() = doTestChanged("""
     """, """
         #![cfg(not(intellij_rust))]
+    """)
+
+    fun `test add no_std attribute`() = doTestChanged("""
+    """, """
+        #![no_std]
+    """)
+
+    fun `test add no_core attribute`() = doTestChanged("""
+    """, """
+        #![no_core]
+    """)
+
+    fun `test change no_std to no_core attribute`() = doTestChanged("""
+        #![no_std]
+    """, """
+        #![no_core]
     """)
 
     private fun type(text: String = "a"): () -> Unit = {

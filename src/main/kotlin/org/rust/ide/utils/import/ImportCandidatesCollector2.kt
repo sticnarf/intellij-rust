@@ -12,22 +12,29 @@ import com.intellij.openapi.util.registry.RegistryValue
 import com.intellij.util.containers.MultiMap
 import org.rust.cargo.project.workspace.PackageOrigin
 import org.rust.cargo.util.AutoInjectedCrates
+import org.rust.ide.injected.isDoctestInjection
 import org.rust.lang.core.crate.Crate
 import org.rust.lang.core.crate.CrateGraphService
 import org.rust.lang.core.crate.CratePersistentId
 import org.rust.lang.core.crate.crateGraph
 import org.rust.lang.core.psi.RsCodeFragmentFactory
+import org.rust.lang.core.psi.RsFile
 import org.rust.lang.core.psi.RsFile.Attributes
 import org.rust.lang.core.psi.RsTraitItem
 import org.rust.lang.core.psi.ext.*
 import org.rust.lang.core.resolve.Namespace
 import org.rust.lang.core.resolve.TYPES_N_VALUES
+import org.rust.lang.core.resolve.TraitImplSource
+import org.rust.lang.core.resolve.ref.MethodResolveVariant
 import org.rust.lang.core.resolve.ref.deepResolve
 import org.rust.lang.core.resolve2.*
+import org.rust.lang.core.resolve2.RsModInfoBase.RsModInfo
+import org.rust.stdext.mapNotNullToSet
 import org.rust.stdext.mapToSet
 
 private val AUTO_IMPORT_USING_NEW_RESOLVE: RegistryValue = Registry.get("org.rust.auto.import.using.new.resolve")
-val Project.useAutoImportWithNewResolve: Boolean get() = isNewResolveEnabled && AUTO_IMPORT_USING_NEW_RESOLVE.asBoolean()
+private val Project.useAutoImportWithNewResolve: Boolean get() = isNewResolveEnabled && AUTO_IMPORT_USING_NEW_RESOLVE.asBoolean()
+val RsElement.useAutoImportWithNewResolve: Boolean get() = project.useAutoImportWithNewResolve && !isDoctestInjection
 
 /**
  * ## High-level description
@@ -83,6 +90,41 @@ object ImportCandidatesCollector2 {
             .filter { it.qualifiedNamedItem.item !in processedElements[it.qualifiedNamedItem.itemName] }
             .sortedBy { nameToPriority[it.qualifiedNamedItem.itemName] }
     }
+
+    /**
+     * Returns a sequence of import trait candidates for given [resolvedMethods].
+     * After importing any of which it becomes possible to resolve the corresponding method call correctly.
+     *
+     * Returns null if there aren't traits to import at all. It can mean:
+     * * given [resolvedMethods] don't refer to any trait
+     * * if at least one trait related to [resolvedMethods] is already in scope
+     */
+    fun getImportCandidates(scope: RsElement, resolvedMethods: List<MethodResolveVariant>): List<ImportCandidate2>? =
+        getTraitImportCandidates(scope, resolvedMethods.map { it.source })
+
+    fun getTraitImportCandidates(scope: RsElement, sources: List<TraitImplSource>): List<ImportCandidate2>? {
+        val traits = ImportCandidatesCollector.collectTraitsToImport(scope, sources)
+            ?: return null
+        val traitsPaths = traits.mapNotNullToSet { it.asModPath() }
+
+        val context = ImportContext2.from(scope, ImportContext2.Type.AUTO_IMPORT) ?: return emptyList()
+        val modPaths = context.getAllModPaths()
+        val itemsPaths = modPaths.flatMap { context.getTraitsPathsInMod(it, traitsPaths) }
+        return context.convertToCandidates(itemsPaths)
+    }
+
+    private fun getImportCandidates(context: ImportContext2, target: RsQualifiedNamedElement): List<ImportCandidate2> {
+        val name = if (target is RsFile) {
+            target.modName
+        } else {
+            target.name
+        } ?: return emptyList()
+        return getImportCandidates(context, name)
+            .filter { it.qualifiedNamedItem.item == target }
+    }
+
+    fun findImportCandidate(context: ImportContext2, target: RsQualifiedNamedElement): ImportCandidate2? =
+        getImportCandidates(context, target).firstOrNull()
 }
 
 private fun ImportContext2.convertToCandidates(itemsPaths: List<ItemUsePath>): List<ImportCandidate2> =
@@ -91,14 +133,20 @@ private fun ImportContext2.convertToCandidates(itemsPaths: List<ItemUsePath>): L
         .mapValues { (item, paths) -> filterForSingleItem(paths, item) }
         .flatMap { (item, paths) ->
             val itemsPsi = item
-                .toPsi(rootDefMap, project)
+                .toPsi(rootInfo)
                 .filterIsInstance<RsQualifiedNamedElement>()
-                .filter(namespaceFilter)
+                .let { list ->
+                    if (pathInfo != null) {
+                        list.filter(pathInfo.namespaceFilter)
+                    } else {
+                        list
+                    }
+                }
             // cartesian product of `itemsPsi` and `paths`
             itemsPsi.flatMap { itemPsi ->
                 paths.map { path ->
                     val qualifiedItem = QualifiedNamedItem2(itemPsi, path.path, path.crate)
-                    val importInfo = qualifiedItem.toImportInfo(rootDefMap)
+                    val importInfo = qualifiedItem.toImportInfo(rootDefMap, rootModData)
                     ImportCandidate2(qualifiedItem, importInfo)
                 }
             }
@@ -116,7 +164,9 @@ private data class ModUsePath(
     val crate: Crate,
     /** corresponds to `path.last()` */
     val mod: ModData
-)
+) {
+    override fun toString(): String = path.joinToString("::")
+}
 
 private fun ImportContext2.getAllModPaths(): List<ModUsePath> {
     val defMaps = rootDefMap.getInitialDefMapsToSearch(project.crateGraph)
@@ -255,7 +305,10 @@ private fun ImportContext2.getAllItemPathsInMod(modPath: ModUsePath, itemName: S
 private fun ImportContext2.getPerNsPaths(modPath: ModUsePath, perNs: PerNs, name: String): List<ItemUsePath> =
     perNs.getVisItemsByNamespace().flatMap { (visItems, namespace) ->
         visItems
-            .filter { checkVisibility(it, modPath.mod) && !hasVisibleItemInRootScope(name, namespace) }
+            .filter {
+                checkVisibility(it, modPath.mod)
+                    && (type == ImportContext2.Type.OTHER || !hasVisibleItemInRootScope(name, namespace))
+            }
             .map { ItemUsePath(modPath.path + name, modPath.crate, it, namespace) }
     }
 
@@ -264,13 +317,22 @@ private fun ImportContext2.hasVisibleItemInRootScope(name: String, namespace: Na
     return perNs.getVisItems(namespace).isNotEmpty()
 }
 
+/** Returns paths to [traits] in scope of [modPath] */
+private fun ImportContext2.getTraitsPathsInMod(modPath: ModUsePath, traits: Set<ModPath>): List<ItemUsePath> =
+    modPath.mod.visibleItems
+        .flatMap { (name, perNs) ->
+            perNs.types
+                .filter { checkVisibility(it, modPath.mod) && it.path in traits }
+                .map { ItemUsePath(modPath.path + name, modPath.crate, it, Namespace.Types) }
+        }
+
 
 private data class ItemWithNamespace(val path: ModPath, val isModOrEnum: Boolean, val namespace: Namespace) {
     override fun toString(): String = "$path ($namespace)"
 }
 
-private fun ItemWithNamespace.toPsi(defMap: CrateDefMap, project: Project): List<RsNamedElement> =
-    VisItem(path, Visibility.Public, isModOrEnum).toPsi(defMap, project, namespace)
+private fun ItemWithNamespace.toPsi(info: RsModInfo): List<RsNamedElement> =
+    VisItem(path, Visibility.Public, isModOrEnum).toPsi(info, namespace)
 
 private fun filterForSingleItem(paths: List<ItemUsePath>, item: ItemWithNamespace): List<ItemUsePath> =
     filterForSingleCrate(paths, item)
@@ -299,10 +361,11 @@ private fun filterShortestPath(paths: List<ItemUsePath>): List<ItemUsePath> {
 }
 
 private fun ImportContext2.isUsefulTraitImport(usePath: String): Boolean {
+    if (pathInfo == null) return true
     val path = RsCodeFragmentFactory(project).createPathInTmpMod(
-        parentPathText ?: return true,
+        pathInfo.parentPathText ?: return true,
         rootMod,
-        pathParsingMode,
+        pathInfo.pathParsingMode,
         TYPES_N_VALUES,
         usePath,
         null
@@ -317,7 +380,7 @@ private fun ImportContext2.isUsefulTraitImport(usePath: String): Boolean {
         || element.canBeAccessedByTraitName
 }
 
-private fun QualifiedNamedItem2.toImportInfo(defMap: CrateDefMap): ImportInfo {
+private fun QualifiedNamedItem2.toImportInfo(defMap: CrateDefMap, modData: ModData): ImportInfo {
     val crateName = path.first()
     return if (crateName == "crate") {
         val usePath = path.joinToString("::").let {
@@ -327,11 +390,24 @@ private fun QualifiedNamedItem2.toImportInfo(defMap: CrateDefMap): ImportInfo {
     } else {
         val needInsertExternCrateItem = !defMap.isAtLeastEdition2018 && !defMap.hasExternCrateInCrateRoot(crateName)
         val crateRelativePath = path.copyOfRange(1, path.size).joinToString("::")
-        ImportInfo.ExternCrateImportInfo(containingCrate, crateName, needInsertExternCrateItem, null, crateRelativePath)
+        ImportInfo.ExternCrateImportInfo(
+            crate = containingCrate,
+            externCrateName = crateName,
+            needInsertExternCrateItem = needInsertExternCrateItem,
+            depth = null,
+            crateRelativePath = crateRelativePath,
+            hasModWithSameNameAsExternCrate = crateName in modData.childModules
+        )
     }
 }
 
 private fun CrateDefMap.hasExternCrateInCrateRoot(externCrateName: String): Boolean {
     val externDefMap = externPrelude[externCrateName] ?: return false
     return externCratesInRoot[externCrateName] == externDefMap
+}
+
+private fun RsNamedElement.asModPath(): ModPath? {
+    val name = name ?: return null
+    val modInfo = getModInfo(containingMod) as? RsModInfo ?: return null
+    return modInfo.modData.path.append(name)
 }

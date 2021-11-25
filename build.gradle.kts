@@ -49,11 +49,11 @@ val compileNativeCodeTaskName = "compileNativeCode"
 
 plugins {
     idea
-    kotlin("jvm") version "1.5.20"
-    id("org.jetbrains.intellij") version "1.1.3"
+    kotlin("jvm") version "1.5.31"
+    id("org.jetbrains.intellij") version "1.2.1"
     id("org.jetbrains.grammarkit") version "2021.1.3"
     id("net.saliman.properties") version "1.5.1"
-    id("org.gradle.test-retry") version "1.2.0"
+    id("org.gradle.test-retry") version "1.3.1"
 }
 
 idea {
@@ -74,7 +74,6 @@ allprojects {
 
     repositories {
         mavenCentral()
-        jcenter()
         maven("https://cache-redirector.jetbrains.com/intellij-dependencies")
     }
 
@@ -125,8 +124,6 @@ allprojects {
         buildSearchableOptions { enabled = false }
 
         test {
-            // Drop when `org.jetbrains.intellij` plugin version will be at least 1.2.0
-            systemProperty("idea.force.use.core.classloader", "true")
             testLogging {
                 showStandardStreams = prop("showStandardStreams").toBoolean()
                 afterSuite(
@@ -328,6 +325,9 @@ project(":plugin") {
 
             // Uncomment to enable FUS testing mode
             // jvmArgs("-Dfus.internal.test.mode=true")
+
+            // Uncomment to enable localization testing mode
+            // jvmArgs("-Didea.l10n=true")
         }
 
         withType<PatchPluginXmlTask> {
@@ -344,8 +344,6 @@ project(":plugin") {
     task<RunIdeTask>("buildEventsScheme") {
         dependsOn(tasks.prepareSandbox)
         args("buildEventsScheme", "--outputFile=${buildDir.resolve("eventScheme.json").absolutePath}", "--pluginId=org.rust.lang")
-        // Force headless mode to be able to run command on CI
-        systemProperty("java.awt.headless", "true")
 
         // BACKCOMPAT: 2021.2
         enabled = platformVersion >= 213
@@ -545,13 +543,15 @@ project(":ml-completion") {
         plugins.set(listOf(mlCompletionPlugin))
     }
     dependencies {
-        implementation("org.jetbrains.intellij.deps.completion:completion-ranking-rust:0.2.2")
+        implementation("org.jetbrains.intellij.deps.completion:completion-ranking-rust:0.2.3")
         implementation(project(":"))
         testImplementation(project(":", "testOutput"))
     }
 }
 
 task("runPrettyPrintersTests") {
+    // https://github.com/intellij-rust/intellij-rust/issues/8028
+    enabled = platformVersion < 213 || !isFamily(FAMILY_UNIX)
     doLast {
         val lldbPath = when {
             // TODO: Use `lldb` Python module from CLion distribution

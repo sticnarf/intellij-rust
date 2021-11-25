@@ -39,6 +39,7 @@ import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.IndexNotReadyException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.*
+import com.intellij.openapi.util.NlsContexts.ProgressTitle
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.vfs.VfsUtil
@@ -65,6 +66,7 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.Callable
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.Pair
 import kotlin.reflect.KProperty
 
 val isUnitTestMode: Boolean get() = ApplicationManager.getApplication().isUnitTestMode
@@ -257,14 +259,20 @@ inline fun testAssert(action: () -> Boolean, lazyMessage: () -> Any) {
 fun <T> runWithCheckCanceled(callable: () -> T): T =
     ApplicationUtil.runWithCheckCanceled(callable, ProgressManager.getInstance().progressIndicator)
 
-fun <T> Project.computeWithCancelableProgress(title: String, supplier: () -> T): T {
+fun <T> Project.computeWithCancelableProgress(
+    @Suppress("UnstableApiUsage") @ProgressTitle title: String,
+    supplier: () -> T
+): T {
     if (isUnitTestMode) {
         return supplier()
     }
     return ProgressManager.getInstance().runProcessWithProgressSynchronously<T, Exception>(supplier, title, true, this)
 }
 
-fun Project.runWithCancelableProgress(title: String, process: () -> Unit): Boolean {
+fun Project.runWithCancelableProgress(
+    @Suppress("UnstableApiUsage") @ProgressTitle title: String,
+    process: () -> Unit
+): Boolean {
     if (isUnitTestMode) {
         process()
         return true
@@ -390,6 +398,25 @@ class CachedValueDelegate<T>(provider: () -> CachedValueProvider.Result<T>) {
     operator fun getValue(thisRef: Any?, property: KProperty<*>): T {
         return cachedValue.value
     }
+}
+
+/**
+ * Returns result of [provider] and store it in [dataHolder] among with [dependency].
+ * If stored dependency equals [dependency], then returns stored result, without invoking [provider].
+ */
+fun <T, D> getCachedOrCompute(
+    dataHolder: UserDataHolder,
+    key: Key<Pair<T, D>>,
+    dependency: D,
+    provider: () -> T
+): T {
+    val oldResult = dataHolder.getUserData(key)
+    if (oldResult != null && oldResult.second == dependency) {
+        return oldResult.first
+    }
+    val value = provider()
+    dataHolder.putUserData(key, value to dependency)
+    return value
 }
 
 inline fun <R> nonBlocking(project: Project, crossinline block: () -> R, crossinline uiContinuation: (R) -> Unit) {

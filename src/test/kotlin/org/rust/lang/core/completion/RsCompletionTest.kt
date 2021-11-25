@@ -644,7 +644,6 @@ class RsCompletionTest : RsCompletionTestBase() {
         }
     """)
 
-    @UseNewResolve
     fun `test complete macro2`() = doSingleCompletion("""
         macro foo() {}
         fn main() {
@@ -657,7 +656,6 @@ class RsCompletionTest : RsCompletionTestBase() {
         }
     """)
 
-    @UseNewResolve
     fun `test complete macro2 in use statement`() = doSingleCompletion("""
         pub mod bar {
             pub macro foo() {}
@@ -929,6 +927,18 @@ class RsCompletionTest : RsCompletionTestBase() {
         }
     """)
 
+    fun `test complete const parameters in let binding`() = doSingleCompletion("""
+        struct Frobnicate<const N: u32>(u32);
+        fn main() {
+            let x: Frob/*caret*/
+        }
+    """, """
+        struct Frobnicate<const N: u32>(u32);
+        fn main() {
+            let x: Frobnicate</*caret*/>
+        }
+    """)
+
     fun `test complete type parameters in parameter`() = doSingleCompletion("""
         struct Frobnicate<T>(T);
         fn foo(a: Frob/*caret*/) {}
@@ -999,13 +1009,13 @@ class RsCompletionTest : RsCompletionTestBase() {
         use a::Frobnicate;/*caret*/
     """)
 
-    fun `test don't complete type arguments if all type parameters have a default`() = doSingleCompletion("""
-        struct Frobnicate<T=u32,R=i32>(T, R);
+    fun `test don't complete type arguments if all generic parameters have a default 1`() = doSingleCompletion("""
+        struct Frobnicate<T = u32, R = i32, const N: u32 = 0, const M: u32 = 1>(T, R);
         fn main() {
             let x: Frob/*caret*/
         }
     """, """
-        struct Frobnicate<T=u32,R=i32>(T, R);
+        struct Frobnicate<T = u32, R = i32, const N: u32 = 0, const M: u32 = 1>(T, R);
         fn main() {
             let x: Frobnicate/*caret*/
         }
@@ -1093,7 +1103,6 @@ class RsCompletionTest : RsCompletionTestBase() {
         pub fn func() {}
     """)
 
-    @UseNewResolve
     @MockEdition(Edition.EDITION_2018)
     @MockAdditionalCfgOptions("intellij_rust")
     fun `test completion cfg-disabled item 2`() = doSingleCompletionByFileTree("""

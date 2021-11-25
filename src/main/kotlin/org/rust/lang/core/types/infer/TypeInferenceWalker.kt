@@ -606,7 +606,8 @@ class RsTypeInferenceWalker(
             }
         }
         val argExprs = expr.valueArgumentList.exprList
-        val calleeType = lookup.asTyFunction(ty)?.register() ?: unknownTyFunction(argExprs.size)
+        val calleeType = (lookup.asTyFunction(ty)?.register() ?: unknownTyFunction(argExprs.size))
+            .foldWith(associatedTypeNormalizer) as TyFunction
         if (expected != null) ctx.combineTypes(expected, calleeType.retType)
         inferArgumentTypes(calleeType.paramTypes, argExprs)
         return calleeType.retType
@@ -848,7 +849,7 @@ class RsTypeInferenceWalker(
                             returningTypes += child.expr?.let(ctx::getExprType) ?: TyUnit.INSTANCE
                         }
                     }
-                    is RsLabeledExpression -> {
+                    is RsLooplikeExpr -> {
                         if (label != null) {
                             collectReturningTypes(child, true)
                         }
@@ -884,7 +885,13 @@ class RsTypeInferenceWalker(
         for (arm in arms) {
             arm.pat.extractBindings(matchingExprTy)
             arm.expr?.inferType(expected)
-            arm.matchArmGuard?.expr?.inferType(TyBool.INSTANCE)
+
+            val guard = arm.matchArmGuard
+            if (guard != null) {
+                val expectedGuardTy = if (guard.let == null) TyBool.INSTANCE else null
+                val guardTy = guard.expr?.inferType(expectedGuardTy) ?: TyUnknown
+                guard.pat?.extractBindings(guardTy)
+            }
         }
 
         return getMoreCompleteType(arms.mapNotNull { it.expr?.let(ctx::getExprType) })
@@ -1111,10 +1118,7 @@ class RsTypeInferenceWalker(
             if (!isArrayToSlice(prevType, type)) derefCount++
 
             val outputType = lookup.findIndexOutputType(type, indexType)
-            if (outputType != null
-                // TODO fix resolve in `impl<T, I, const N: usize> Index<I> for [T; N]` and remove this line
-                && (outputType.value != TyUnknown || type !is TyArray)
-            ) {
+            if (outputType != null) {
                 result = outputType.register()
                 break
             }

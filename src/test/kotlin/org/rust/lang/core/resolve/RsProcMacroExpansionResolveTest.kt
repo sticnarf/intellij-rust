@@ -11,7 +11,6 @@ import org.rust.ide.experiments.RsExperiments.EVALUATE_BUILD_SCRIPTS
 import org.rust.ide.experiments.RsExperiments.PROC_MACROS
 import org.rust.lang.core.macros.MacroExpansionScope
 
-@UseNewResolve
 @MinRustcVersion("1.46.0")
 @MockEdition(EDITION_2018)
 @ExpandMacros(MacroExpansionScope.WORKSPACE)
@@ -115,6 +114,158 @@ class RsProcMacroExpansionResolveTest : RsResolveTestBase() {
         fn main() {
             Foo.foo().bar()
         }           //^ unresolved
+    """)
+
+    fun `test custom derive expands to a struct`() = checkByCode("""
+        use test_proc_macros::DeriveStructFooDeclaration;
+
+        #[derive(DeriveStructFooDeclaration)] // struct Foo;
+        struct Bar;
+
+        impl Foo {
+            fn bar(&self) {}
+        }     //X
+
+        fn main() {
+            Foo.bar()
+        }     //^
+    """)
+
+    fun `test custom derive expands to macro declaration`() = checkByCode("""
+        use test_proc_macros::DeriveMacroFooThatExpandsToStructFoo;
+
+        #[derive(DeriveMacroFooThatExpandsToStructFoo)] // macro_rules! foo { () => { struct Foo; } }
+        struct Bar;
+        foo!();
+
+        impl Foo {
+            fn bar(&self) {}
+        }     //X
+
+        fn main() {
+            Foo.bar()
+        }     //^
+    """)
+
+    fun `test custom derive expands to a macro declaration, the macro is unresolved inside the struct`() = checkByCode("""
+        use test_proc_macros::DeriveMacroFooThatExpandsToStructFoo;
+
+        #[derive(DeriveMacroFooThatExpandsToStructFoo)] // macro_rules! foo { () => { struct Foo; } }
+        struct Bar {
+            f: foo!()
+        }    //^ unresolved
+    """)
+
+    fun `test custom derive expands to a macro call`() = checkByCode("""
+        use test_proc_macros::DeriveMacroFooInvocation;
+
+        macro_rules! foo { () => { struct Foo; } }
+        #[derive(DeriveMacroFooInvocation)] // foo!()
+        struct Bar;
+
+        impl Foo {
+            fn bar(&self) {}
+        }     //X
+
+        fn main() {
+            Foo.bar()
+        }     //^
+    """)
+
+    fun `test 2 custom derive expands to a macro declaration and a macro call`() = checkByCode("""
+        use test_proc_macros::*;
+
+        #[derive(DeriveMacroFooThatExpandsToStructFoo)] // macro_rules! foo { () => { struct Foo; } }
+        #[derive(DeriveMacroFooInvocation)] // foo!()
+        struct Bar;
+
+        impl Foo {
+            fn bar(&self) {}
+        }     //X
+
+        fn main() {
+            Foo.bar()
+        }     //^
+    """)
+
+    fun `test 2 custom derive expands to a macro declaration and a macro call 1`() = checkByCode("""
+        use test_proc_macros::*;
+
+        macro_rules! bar {
+            () => {
+                #[derive(DeriveMacroFooThatExpandsToStructFoo)] // macro_rules! foo { () => { struct Foo; } }
+                #[derive(DeriveMacroFooInvocation)] // foo!()
+                struct Bar;
+            };
+        }
+        bar!();
+
+        impl Foo {
+            fn bar(&self) {}
+        }     //X
+
+        fn main() {
+            Foo.bar()
+        }     //^
+    """)
+
+    fun `test 2 custom derive expands to a macro declaration and a macro call 2`() = checkByCode("""
+        use test_proc_macros::*;
+
+        #[derive(DeriveMacroFooThatExpandsToStructFoo, DeriveMacroFooInvocation)]
+        // macro_rules! foo { () => { struct Foo; } }
+        // foo!()
+        struct Bar;
+
+        impl Foo {
+            fn bar(&self) {}
+        }     //X
+
+        fn main() {
+            Foo.bar()
+        }     //^
+    """)
+
+    fun `test 2 custom derive expands to a macro declaration and a macro call 3`() = checkByCode("""
+        use test_proc_macros::*;
+
+        macro_rules! foo { () => { struct Bar; } }
+
+        #[derive(DeriveMacroFooInvocation)] // foo!()
+        #[derive(DeriveMacroFooThatExpandsToStructFoo)] // macro_rules! foo { () => { struct Foo; } }
+        struct Baz;
+
+        impl Bar {
+            fn bar(&self) {}
+        }     //X
+
+        fn main() {
+            Bar.bar()
+        }     //^
+    """)
+
+    fun `test 2 custom derive expands to a macro declaration and a macro call 4`() = checkByCode("""
+        use test_proc_macros::*;
+
+        macro_rules! bar { () => { struct Bar; } }
+
+        #[derive(DeriveMacroBarInvocation)] // bar!()
+        #[derive(DeriveMacroFooThatExpandsToStructFoo)] // macro_rules! foo { () => { struct Foo; } }
+        struct Baz;
+
+        foo!(); // struct Foo;
+
+        impl Foo {
+            fn bar(&self) -> Bar { Bar }
+        }
+
+        impl Bar {
+            fn baz(&self) {}
+        }     //X
+
+        fn main() {
+            Foo.bar().baz()
+        }           //^
     """)
 
     fun `test attr legacy macro`() = checkByCode("""

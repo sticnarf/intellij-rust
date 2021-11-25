@@ -5,9 +5,7 @@
 
 package org.rust.ide.presentation
 
-import org.rust.ide.utils.import.ImportCandidate
-import org.rust.ide.utils.import.ImportCandidatesCollector
-import org.rust.ide.utils.import.ImportContext
+import org.rust.ide.utils.import.*
 import org.rust.lang.core.parser.RustParserUtil
 import org.rust.lang.core.psi.*
 import org.rust.lang.core.psi.ext.*
@@ -239,8 +237,14 @@ open class RsPsiRenderer(
         }
     }
 
-    open fun appendTypeReference(sb: StringBuilder, ref: RsTypeReference) {
-        when (val type = ref.skipParens()) {
+    open fun appendTypeReference(sb: StringBuilder, type: RsTypeReference) {
+        when (type) {
+            is RsParenType -> {
+                sb.append("(")
+                type.typeReference?.let { appendTypeReference(sb, it) }
+                sb.append(")")
+            }
+
             is RsTupleType -> {
                 val types = type.typeReferenceList
                 if (types.size == 1) {
@@ -317,10 +321,7 @@ open class RsPsiRenderer(
             is RsMacroType -> {
                 appendPath(sb, type.macroCall.path)
                 sb.append("!(")
-                val macroBody = type.macroCall.macroBody
-                if (macroBody != null) {
-                    sb.append(macroBody)
-                }
+                type.macroCall.macroBody?.let { sb.append(it) }
                 sb.append(")")
             }
         }
@@ -668,6 +669,7 @@ class ImportingPsiRenderer(
 ) : PsiSubstitutingPsiRenderer(options, substitutions) {
 
     private val importContext = ImportContext.from(context.project, context)
+    private val importContext2 = ImportContext2.from(context, ImportContext2.Type.OTHER)
 
     private val visibleNames: Pair<MutableMap<Pair<String, Namespace>, RsElement>, MutableMap<RsElement, String>> by lazy(LazyThreadSafetyMode.PUBLICATION) {
         val nameToElement = mutableMapOf<Pair<String, Namespace>, RsElement>()
@@ -687,8 +689,8 @@ class ImportingPsiRenderer(
     private val visibleNameToElement: MutableMap<Pair<String, Namespace>, RsElement> get() = visibleNames.first
     private val visibleElementToName: MutableMap<RsElement, String> get() = visibleNames.second
 
-    private val itemsToImportMut: MutableSet<ImportCandidate> = mutableSetOf()
-    val itemsToImport: Set<ImportCandidate> get() = itemsToImportMut
+    private val itemsToImportMut: MutableSet<ImportCandidateBase> = mutableSetOf()
+    val itemsToImport: Set<ImportCandidateBase> get() = itemsToImportMut
 
     override fun appendPathWithoutArgs(sb: StringBuilder, path: RsPath) {
         val pathReferenceName = path.referenceName
@@ -707,8 +709,11 @@ class ImportingPsiRenderer(
                 if (visibleElementName != null) {
                     sb.append(visibleElementName)
                 } else {
-                    val importCandidate = ImportCandidatesCollector.getImportCandidates(importContext, resolved)
-                        .firstOrNull()
+                    val importCandidate = if (path.useAutoImportWithNewResolve && importContext2 != null) {
+                        ImportCandidatesCollector2.findImportCandidate(importContext2, resolved)
+                    } else {
+                        ImportCandidatesCollector.findImportCandidate(importContext, resolved)
+                    }
                     if (importCandidate == null) {
                         val resolvedCrate = resolved.containingCrate
                         if (resolvedCrate == null || resolvedCrate == context.containingCrate) {

@@ -68,7 +68,10 @@ class RsErrorAnnotator : AnnotatorBase(), HighlightRangeExtension {
             override fun visitLetDecl(o: RsLetDecl) = checkLetDecl(rsHolder, o)
             override fun visitLetElseBranch(o: RsLetElseBranch) = checkLetElseBranch(rsHolder, o)
             override fun visitLabel(o: RsLabel) = checkLabel(rsHolder, o)
+            override fun visitLabelDecl(o: RsLabelDecl) = checkLabelDecl(rsHolder, o)
             override fun visitLifetime(o: RsLifetime) = checkLifetime(rsHolder, o)
+            override fun visitMacro2(o: RsMacro2) = checkMacro2(rsHolder, o)
+            override fun visitMatchArmGuard(o: RsMatchArmGuard) = checkMatchArmGuard(rsHolder, o)
             override fun visitModDeclItem(o: RsModDeclItem) = checkModDecl(rsHolder, o)
             override fun visitModItem(o: RsModItem) = checkDuplicates(rsHolder, o)
             override fun visitUseSpeck(o: RsUseSpeck) = checkUseSpeck(rsHolder, o)
@@ -115,6 +118,10 @@ class RsErrorAnnotator : AnnotatorBase(), HighlightRangeExtension {
         }
 
         element.accept(visitor)
+    }
+
+    private fun checkMacro2(holder: RsAnnotationHolder, macro: RsMacro2) {
+        DECL_MACRO.check(holder, macro.macroKw, "`macro`")
     }
 
     private fun checkMetaItem(holder: RsAnnotationHolder, metaItem: RsMetaItem) {
@@ -489,7 +496,10 @@ class RsErrorAnnotator : AnnotatorBase(), HighlightRangeExtension {
         val reference = ref.reference ?: return
         val highlightedElement = ref.referenceNameElement ?: return
         val referenceName = ref.referenceName ?: return
-        val resolvedElement = reference.resolve() as? RsVisible ?: return
+        val resolvedElement = when (ref) {
+            is RsStructLiteralField -> reference.multiResolve().firstOrNull { it is RsVisible }
+            else -> reference.resolve()
+        } as? RsVisible ?: return
         val oMod = o.contextStrict<RsMod>() ?: return
         if (resolvedElement.isVisibleFrom(oMod)) return
         val withinOneCrate = resolvedElement.crateRoot == o.crateRoot
@@ -623,6 +633,10 @@ class RsErrorAnnotator : AnnotatorBase(), HighlightRangeExtension {
     }
 
     private fun checkLifetimeParameter(holder: RsAnnotationHolder, lifetimeParameter: RsLifetimeParameter) {
+        if (lifetimeParameter.name.isIllegalLifetimeName(lifetimeParameter.edition)) {
+            RsDiagnostic.IllegalLifetimeName(lifetimeParameter).addToHolder(holder)
+        }
+
         checkReservedLifetimeName(holder, lifetimeParameter)
         checkDuplicates(holder, lifetimeParameter)
     }
@@ -639,6 +653,7 @@ class RsErrorAnnotator : AnnotatorBase(), HighlightRangeExtension {
         if (parent is RsImplItem ||
             parent is RsForeignModItem ||
             parent is RsEnumVariant ||
+            isInTrait(vis) ||
             isInTraitImpl(vis) ||
             isInEnumVariantField(vis)
         ) {
@@ -672,11 +687,27 @@ class RsErrorAnnotator : AnnotatorBase(), HighlightRangeExtension {
     }
 
     private fun checkLabel(holder: RsAnnotationHolder, label: RsLabel) {
-        if (!hasResolve(label)) return
-        RsDiagnostic.UndeclaredLabelError(label).addToHolder(holder)
+        if (hasResolve(label)) {
+            RsDiagnostic.UndeclaredLabelError(label).addToHolder(holder)
+        }
+        val labelName = label.referenceName
+        if (labelName.isInvalidLabelName(label.edition)) {
+            RsDiagnostic.InvalidLabelName(label, labelName).addToHolder(holder)
+        }
+    }
+
+    private fun checkLabelDecl(holder: RsAnnotationHolder, labelDecl: RsLabelDecl) {
+        val labelName = labelDecl.name
+        if (labelName?.isInvalidLabelName(labelDecl.edition) == true) {
+            RsDiagnostic.InvalidLabelName(labelDecl.quoteIdentifier, labelName).addToHolder(holder)
+        }
     }
 
     private fun checkLifetime(holder: RsAnnotationHolder, lifetime: RsLifetime) {
+        if (lifetime.name.isIllegalLifetimeName(lifetime.edition)) {
+            RsDiagnostic.IllegalLifetimeName(lifetime).addToHolder(holder)
+        }
+
         if (lifetime.isPredefined || !hasResolve(lifetime)) return
 
         val owner = lifetime.ancestorStrict<RsGenericDeclaration>() ?: return
@@ -700,6 +731,13 @@ class RsErrorAnnotator : AnnotatorBase(), HighlightRangeExtension {
                 RsDiagnostic.InBandAndExplicitLifetimesError(lifetime).addToHolder(holder)
             else ->
                 RsDiagnostic.UndeclaredLifetimeError(lifetime).addToHolder(holder)
+        }
+    }
+
+    private fun checkMatchArmGuard(holder: RsAnnotationHolder, guard: RsMatchArmGuard) {
+        val let = guard.let
+        if (let != null) {
+            IF_LET_GUARD.check(holder, let, "if let guard")
         }
     }
 
@@ -911,6 +949,31 @@ class RsErrorAnnotator : AnnotatorBase(), HighlightRangeExtension {
     }
 
     private fun checkTypeAlias(holder: RsAnnotationHolder, ta: RsTypeAlias) {
+        when (val owner = ta.owner) {
+            is RsAbstractableOwner.Trait -> {
+                ta.typeReference?.let { ASSOCIATED_TYPE_DEFAULTS.check(holder, it, "associated type defaults") }
+                val typeParameterList = ta.typeParameterList
+                if (typeParameterList != null && typeParameterList.genericParameterList.isNotEmpty()) {
+                    GENERIC_ASSOCIATED_TYPES.check(holder, typeParameterList, "generic associated types")
+                }
+                ta.whereClause?.let { GENERIC_ASSOCIATED_TYPES.check(holder, it, "where clauses on associated types") }
+            }
+            is RsAbstractableOwner.Impl -> {
+                if (owner.isInherent) {
+                    INHERENT_ASSOCIATED_TYPES.check(holder, ta, "inherent associated types")
+                }
+                val typeParameterList = ta.typeParameterList
+                if (typeParameterList != null && typeParameterList.genericParameterList.isNotEmpty()) {
+                    GENERIC_ASSOCIATED_TYPES.check(holder, typeParameterList, "generic associated types")
+                }
+                ta.whereClause?.let { GENERIC_ASSOCIATED_TYPES.check(holder, it, "where clauses on associated types") }
+            }
+            is RsAbstractableOwner.Foreign -> {
+                EXTERN_TYPES.check(holder, ta, "extern types")
+            }
+            else -> {}
+        }
+
         checkDuplicates(holder, ta)
     }
 
@@ -1292,10 +1355,11 @@ class RsErrorAnnotator : AnnotatorBase(), HighlightRangeExtension {
         }
     }
 
-    private fun isInTraitImpl(o: RsVis): Boolean {
-        val impl = o.parent?.parent?.parent
-        return impl is RsImplItem && impl.traitRef != null
-    }
+    private fun isInTrait(o: RsVis): Boolean =
+        (o.parent as? RsAbstractable)?.owner is RsAbstractableOwner.Trait
+
+    private fun isInTraitImpl(o: RsVis): Boolean =
+        (o.parent as? RsAbstractable)?.owner?.isTraitImpl == true
 
     private fun isInEnumVariantField(o: RsVis): Boolean {
         val field = o.parent as? RsNamedFieldDecl
@@ -1624,3 +1688,22 @@ private fun RsAttr.isBuiltinWithName(target: String): Boolean {
 
 private val RsPat.isTopLevel: Boolean
     get() = findBinding()?.topLevelPattern == this
+
+private fun String?.isIllegalLifetimeName(edition: Edition?): Boolean {
+    if (this == null || this in RESERVED_LIFETIME_NAMES) return false
+    return drop(1) in keywords(edition)
+}
+
+private fun String.isInvalidLabelName(edition: Edition?): Boolean = removePrefix("'") in keywords(edition)
+
+private fun keywords(edition: Edition?): Set<String> =
+    if (edition == null || edition > Edition.EDITION_2015) KEYWORDS_EDITION_2018 else KEYWORDS_EDITION_2015
+
+private val KEYWORDS_EDITION_2015: Set<String> = hashSetOf(
+    "abstract", "become", "box", "do", "final", "macro", "override", "priv", "typeof", "unsized", "virtual", "yield",
+    "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in",
+    "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super",
+    "trait", "true", "type", "unsafe", "use", "where", "while"
+)
+
+private val KEYWORDS_EDITION_2018: Set<String> = KEYWORDS_EDITION_2015 + hashSetOf("async", "await", "dyn", "try")

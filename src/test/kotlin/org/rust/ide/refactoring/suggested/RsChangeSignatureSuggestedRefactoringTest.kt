@@ -20,6 +20,13 @@ class RsChangeSignatureSuggestedRefactoringTest : RsSuggestedRefactoringTestBase
         fn foo()/*caret*/ {}
     """) { myFixture.type(" -> u32") }
 
+    fun `test unavailable when changing function parameter type`() = doUnavailableTest("""
+        fn foo(a: /*caret*/u32) {}
+    """) {
+        myFixture.performEditorAction(IdeActions.ACTION_EDITOR_DELETE)
+        myFixture.type("i")
+    }
+
     fun `test unavailable on inner binding change`() = doUnavailableTest("""
         struct S {
             a: u32
@@ -634,6 +641,48 @@ New:
     """.trimIndent())
         }
     }
+
+    fun `test change trait method parameter type`() = doTestChangeSignature("""
+        trait Trait {
+            fn foo(&self, a: /*caret*/u32);
+        }
+        struct S;
+        impl Trait for S {
+            fn foo(&self, a: u32) {}
+        }
+    """, """
+        trait Trait {
+            fn foo(&self, a: i32);
+        }
+        struct S;
+        impl Trait for S {
+            fn foo(&self, a: i32) {}
+        }
+    """, "foo", {
+        myFixture.performEditorAction(IdeActions.ACTION_EDITOR_DELETE)
+        myFixture.type("i")
+    }, """
+Old:
+  'foo'
+  '('
+  LineBreak('', true)
+  Group:
+    'a'
+    ': '
+    'u32' (modified)
+  LineBreak('', false)
+  ')'
+New:
+  'foo'
+  '('
+  LineBreak('', true)
+  Group:
+    'a'
+    ': '
+    'i32' (modified)
+  LineBreak('', false)
+  ')'
+    """.trimIndent())
 
     private fun withMockedDefaultValues(expressions: List<RsExpr>, action: () -> Unit) {
         val originalValue = _suggestedChangeSignatureNewParameterValuesForTests

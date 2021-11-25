@@ -52,29 +52,45 @@ data class ImportContext private constructor(
 }
 
 class ImportContext2 private constructor(
-    val project: Project,
+    /** Info of mod in which auto-import or completion is called */
+    val rootInfo: RsModInfoBase.RsModInfo,
     /** Mod in which auto-import or completion is called */
     val rootMod: RsMod,
-    val rootModData: ModData,
-    /** DefMap of [rootModData] */
-    val rootDefMap: CrateDefMap,
+    val type: Type,
 
-    val parentPathText: String?,
-    val pathParsingMode: RustParserUtil.PathParsingMode,
-    val namespaceFilter: (RsQualifiedNamedElement) -> Boolean,
+    val pathInfo: PathInfo?,
 ) {
+    val project: Project get() = rootInfo.project
+    val rootModData: ModData get() = rootInfo.modData
+    val rootDefMap: CrateDefMap get() = rootInfo.defMap
+
     companion object {
-        fun from(path: RsPath, isCompletion: Boolean): ImportContext2? {
-            val rootMod = path.containingMod
+        fun from(path: RsPath, type: Type = Type.AUTO_IMPORT): ImportContext2? =
+            from(path, type, PathInfo.from(path, type == Type.COMPLETION))
+
+        fun from(context: RsElement, type: Type = Type.AUTO_IMPORT, pathInfo: PathInfo? = null): ImportContext2? {
+            val rootMod = context.containingMod
             val info = getModInfo(rootMod) as? RsModInfoBase.RsModInfo ?: return null
-            return ImportContext2(
-                project = info.project,
-                rootMod = rootMod,
-                rootModData = info.modData,
-                rootDefMap = info.defMap,
+            return ImportContext2(info, rootMod, type, pathInfo)
+        }
+    }
+
+    enum class Type {
+        AUTO_IMPORT,
+        COMPLETION,
+        OTHER,
+    }
+
+    class PathInfo(
+        val parentPathText: String?,
+        val pathParsingMode: RustParserUtil.PathParsingMode,
+        val namespaceFilter: (RsQualifiedNamedElement) -> Boolean,
+    ) {
+        companion object {
+            fun from(path: RsPath, isCompletion: Boolean): PathInfo = PathInfo(
                 parentPathText = (path.parent as? RsPath)?.text,
                 pathParsingMode = path.pathParsingMode,
-                namespaceFilter = path.namespaceFilter(isCompletion)
+                namespaceFilter = path.namespaceFilter(isCompletion),
             )
         }
     }

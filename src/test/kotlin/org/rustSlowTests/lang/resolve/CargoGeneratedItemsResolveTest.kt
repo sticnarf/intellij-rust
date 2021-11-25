@@ -8,12 +8,15 @@ package org.rustSlowTests.lang.resolve
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.util.registry.Registry
 import com.intellij.testFramework.fixtures.impl.TempDirTestFixtureImpl
+import org.intellij.lang.annotations.Language
+import org.rust.WithExperimentalFeatures
 import org.rust.fileTree
 import org.rust.ide.experiments.RsExperiments
+import org.rust.lang.core.psi.RsMethodCall
 import org.rust.lang.core.psi.RsPath
-import org.rust.openapiext.runWithEnabledFeatures
 import org.rustSlowTests.cargo.runconfig.RunConfigurationTestBase
 
+@WithExperimentalFeatures(RsExperiments.EVALUATE_BUILD_SCRIPTS)
 class CargoGeneratedItemsResolveTest : RunConfigurationTestBase() {
 
     private val tempDirFixture = TempDirTestFixtureImpl()
@@ -32,48 +35,24 @@ class CargoGeneratedItemsResolveTest : RunConfigurationTestBase() {
     // because it leads to too long path and compilation of test rust project fails on Windows
     override fun shouldContainTempFiles(): Boolean = false
 
-    fun `test include in workspace project`() = withEnabledEvaluateBuildScriptsFeature {
-        val testProject = buildProject {
+    fun `test include in workspace project`() {
+        buildProject {
             toml("Cargo.toml", """
                 [package]
                 name = "intellij-rust-test"
                 version = "0.1.0"
                 authors = []
             """)
-            rust("build.rs", """
-                use std::env;
-                use std::fs::File;
-                use std::io::Write;
-                use std::path::Path;
-
-                fn main() {
-                    let out_dir = env::var("OUT_DIR").unwrap();
-                    let dest_path = Path::new(&out_dir).join("hello.rs");
-                    let mut f = File::create(&dest_path).unwrap();
-
-                    f.write_all(b"
-                        pub fn message() -> &'static str {
-                            \"Hello, World!\"
-                        }",
-                    ).unwrap();
-                }
-            """)
+            rust("build.rs", BUILD_RS)
             dir("src") {
-                rust("main.rs", """
-                    include!(concat!(env!("OUT_DIR"), "/hello.rs"));
-
-                    fn main() {
-                        println!("{}", message());
-                                        //^
-                    }
-                """)
+                rust("main.rs", MAIN_RS)
             }
         }.checkReferenceIsResolved<RsPath>("src/main.rs")
     }
 
     // https://github.com/intellij-rust/intellij-rust/issues/4579
-    fun `test do not overflow stack 1`() = withEnabledEvaluateBuildScriptsFeature {
-        val testProject = buildProject {
+    fun `test do not overflow stack 1`() {
+        buildProject {
             toml("Cargo.toml", """
                 [package]
                 name = "intellij-rust-test"
@@ -112,8 +91,8 @@ class CargoGeneratedItemsResolveTest : RunConfigurationTestBase() {
     }
 
     // https://github.com/intellij-rust/intellij-rust/issues/4579
-    fun `test do not overflow stack 2`() = withEnabledEvaluateBuildScriptsFeature {
-        val testProject = buildProject {
+    fun `test do not overflow stack 2`() {
+        buildProject {
             toml("Cargo.toml", """
                 [workspace]
                 members = [
@@ -185,7 +164,7 @@ class CargoGeneratedItemsResolveTest : RunConfigurationTestBase() {
         }.checkReferenceIsResolved<RsPath>("intellij-rust-test-1/src/lib.rs")
     }
 
-    fun `test include in dependency`() = withEnabledEvaluateBuildScriptsFeature {
+    fun `test include in dependency`() {
         buildProject {
             toml("Cargo.toml", """
                 [package]
@@ -207,7 +186,7 @@ class CargoGeneratedItemsResolveTest : RunConfigurationTestBase() {
         }.checkReferenceIsResolved<RsPath>("src/lib.rs")
     }
 
-    fun `test include with build script info with invalid code`() = withEnabledEvaluateBuildScriptsFeature {
+    fun `test include with build script info with invalid code`() {
         assertTrue(Registry.`is`("org.rust.cargo.evaluate.build.scripts.wrapper"))
         buildProject {
             toml("Cargo.toml", """
@@ -231,7 +210,7 @@ class CargoGeneratedItemsResolveTest : RunConfigurationTestBase() {
         }.checkReferenceIsResolved<RsPath>("src/lib.rs")
     }
 
-    fun `test generated cfg option`() = withEnabledEvaluateBuildScriptsFeature {
+    fun `test generated cfg option`() {
         val libraryDir = tempDirFixture.getFile(".")!!
         val library = fileTree {
             toml("Cargo.toml", """
@@ -298,7 +277,7 @@ class CargoGeneratedItemsResolveTest : RunConfigurationTestBase() {
         }.checkReferenceIsResolved<RsPath>("src/main.rs", toFile = ".../src/enabled.rs")
     }
 
-    fun `test generated feature`() = withEnabledEvaluateBuildScriptsFeature {
+    fun `test generated feature`() {
         val libraryDir = tempDirFixture.getFile(".")!!
         val library = fileTree {
             toml("Cargo.toml", """
@@ -365,7 +344,7 @@ class CargoGeneratedItemsResolveTest : RunConfigurationTestBase() {
         }.checkReferenceIsResolved<RsPath>("src/main.rs", toFile = ".../src/enabled.rs")
     }
 
-    fun `test custom generated feature`() = withEnabledEvaluateBuildScriptsFeature {
+    fun `test custom generated feature`() {
         val libraryDir = tempDirFixture.getFile(".")!!
         val library = fileTree {
             toml("Cargo.toml", """
@@ -432,7 +411,7 @@ class CargoGeneratedItemsResolveTest : RunConfigurationTestBase() {
         }.checkReferenceIsResolved<RsPath>("src/main.rs", toFile = ".../src/enabled.rs")
     }
 
-    fun `test generated cfg option with the same name as compiler one`() = withEnabledEvaluateBuildScriptsFeature {
+    fun `test generated cfg option with the same name as compiler one`() {
         val libraryDir = tempDirFixture.getFile(".")!!
         val library = fileTree {
             toml("Cargo.toml", """
@@ -499,7 +478,7 @@ class CargoGeneratedItemsResolveTest : RunConfigurationTestBase() {
         }.checkReferenceIsResolved<RsPath>("src/main.rs", toFile = ".../src/enabled.rs")
     }
 
-    fun `test generated custom feature with the same name as compiler one`() = withEnabledEvaluateBuildScriptsFeature {
+    fun `test generated custom feature with the same name as compiler one`() {
         val libraryDir = tempDirFixture.getFile(".")!!
         val library = fileTree {
             toml("Cargo.toml", """
@@ -566,7 +545,7 @@ class CargoGeneratedItemsResolveTest : RunConfigurationTestBase() {
         }.checkReferenceIsResolved<RsPath>("src/main.rs", toFile = ".../src/enabled.rs")
     }
 
-    fun `test generated environment variables`() = withEnabledEvaluateBuildScriptsFeature {
+    fun `test generated environment variables`() {
         buildProject {
             toml("Cargo.toml", """
                 [package]
@@ -601,7 +580,7 @@ class CargoGeneratedItemsResolveTest : RunConfigurationTestBase() {
         }.checkReferenceIsResolved<RsPath>("src/main.rs", toFile = ".../foo/bar/hello.rs")
     }
 
-    fun `test generated environment variables 2`() = withEnabledEvaluateBuildScriptsFeature {
+    fun `test generated environment variables 2`() {
         buildProject {
             toml("Cargo.toml", """
                 [package]
@@ -649,7 +628,7 @@ class CargoGeneratedItemsResolveTest : RunConfigurationTestBase() {
         }.checkReferenceIsResolved<RsPath>("src/main.rs", toFile = ".../gen/hello.rs")
     }
 
-    fun `test include without file name in literal`() = withEnabledEvaluateBuildScriptsFeature {
+    fun `test include without file name in literal`() {
         buildProject {
             toml("Cargo.toml", """
                 [package]
@@ -697,7 +676,7 @@ class CargoGeneratedItemsResolveTest : RunConfigurationTestBase() {
         }.checkReferenceIsResolved<RsPath>("src/main.rs", toFile = ".../gen/hello.rs")
     }
 
-    fun `test include without file name in literal 2`() = withEnabledEvaluateBuildScriptsFeature {
+    fun `test include without file name in literal 2`() {
         buildProject {
             toml("Cargo.toml", """
                 [package]
@@ -736,7 +715,7 @@ class CargoGeneratedItemsResolveTest : RunConfigurationTestBase() {
         }.checkReferenceIsResolved<RsPath>("src/main.rs", toFile = ".../hello.rs")
     }
 
-    fun `test do not fail on compilation error`() = withEnabledEvaluateBuildScriptsFeature {
+    fun `test do not fail on compilation error`() {
         buildProject {
             toml("Cargo.toml", """
                 [package]
@@ -760,6 +739,127 @@ class CargoGeneratedItemsResolveTest : RunConfigurationTestBase() {
         }.checkReferenceIsResolved<RsPath>("src/main.rs", toFile = ".../src/bar.rs")
     }
 
-    private fun withEnabledEvaluateBuildScriptsFeature(action: () -> Unit) =
-        runWithEnabledFeatures(RsExperiments.EVALUATE_BUILD_SCRIPTS, action = action)
+    fun `test custom target directory location`() {
+        val customTargetDir = tempDirFixture.getFile(".")!!.path
+        buildProject {
+            toml("Cargo.toml", """
+                [package]
+                name = "intellij-rust-test"
+                version = "0.1.0"
+                authors = []
+            """)
+
+            dir("src") {
+                rust("main.rs", MAIN_RS)
+            }
+            dir(".cargo") {
+                toml("config", """
+                    [build]
+                    target-dir = "$customTargetDir"
+                """)
+            }
+            rust("build.rs", BUILD_RS)
+        }.checkReferenceIsResolved<RsPath>("src/main.rs", toFile = ".../hello.rs")
+    }
+
+    fun `test workspace with package`() {
+        buildProject {
+            toml("Cargo.toml", """
+                [package]
+                name = "intellij-rust-test-1"
+                version = "0.1.0"
+                authors = []
+
+                [workspace]
+                members = ["intellij-rust-test-2"]
+            """)
+            dir("src") {
+                rust("main.rs", "fn main() {}")
+            }
+            dir("intellij-rust-test-2") {
+                toml("Cargo.toml", """
+                    [package]
+                    name = "intellij-rust-test-2"
+                    version = "0.1.0"
+                    authors = []
+                """)
+
+                dir("src") {
+                    rust("main.rs", MAIN_RS)
+                }
+                rust("build.rs", BUILD_RS)
+            }
+        }.checkReferenceIsResolved<RsPath>("intellij-rust-test-2/src/main.rs", toFile = ".../hello.rs")
+    }
+
+    // https://github.com/intellij-rust/intellij-rust/issues/8057
+    fun `test generated impl block`() {
+        buildProject {
+            toml("Cargo.toml", """
+                [package]
+                name = "intellij-rust-test"
+                version = "0.1.0"
+                authors = []
+            """)
+
+            dir("src") {
+                rust("main.rs", """
+                    include!(concat!(env!("OUT_DIR"), "/hello.rs"));
+
+                    fn main() {
+                        Hello.hello();
+                    }          //^
+                """)
+            }
+            rust("build.rs", """
+                use std::{fs, path, env};
+
+                fn main() {
+                    let content = "\
+                    pub struct Hello;
+                    impl Hello {
+                        pub fn hello(&self) {
+                            println!(\"Hello!\");
+                        }
+                    }
+                    ";
+
+                    let out_dir = env::var_os("OUT_DIR").unwrap();
+                    let path = path::Path::new(&out_dir).join("hello.rs");
+                    fs::write(&path, content).unwrap();
+                }
+            """)
+        }.checkReferenceIsResolved<RsMethodCall>("src/main.rs", toFile = ".../hello.rs")
+    }
+
+    companion object {
+        @Language("Rust")
+        private const val MAIN_RS = """
+            include!(concat!(env!("OUT_DIR"), "/hello.rs"));
+            fn main() {
+                println!("{}", message());
+                               //^
+            }
+        """
+
+        @Language("Rust")
+        private const val BUILD_RS = """
+            use std::env;
+            use std::fs::File;
+            use std::io::Write;
+            use std::path::Path;
+
+            fn main() {
+                let out_dir = env::var("OUT_DIR").unwrap();
+                let dest_path = Path::new(&out_dir).join("hello.rs");
+                let mut f = File::create(&dest_path).unwrap();
+
+                f.write_all(b"
+                    pub fn message() -> &'static str {
+                        \"Hello, World!\"
+                    }",
+                ).unwrap();
+            }
+        """
+    }
 }

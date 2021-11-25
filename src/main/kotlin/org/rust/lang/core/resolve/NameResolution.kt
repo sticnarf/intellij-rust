@@ -52,9 +52,7 @@ import org.rust.lang.core.resolve2.RsModInfoBase.RsModInfo
 import org.rust.lang.core.stubs.index.RsNamedElementIndex
 import org.rust.lang.core.types.*
 import org.rust.lang.core.types.consts.CtInferVar
-import org.rust.lang.core.types.infer.foldCtConstParameterWith
-import org.rust.lang.core.types.infer.foldTyTypeParameterWith
-import org.rust.lang.core.types.infer.substitute
+import org.rust.lang.core.types.infer.*
 import org.rust.lang.core.types.ty.*
 import org.rust.openapiext.*
 import org.rust.stdext.buildList
@@ -394,7 +392,7 @@ private fun processQualifiedPathResolveVariants(
     val (base, subst) = qualifier.reference?.advancedResolve() ?: run {
         val primitiveType = TyPrimitive.fromPath(qualifier)
         if (primitiveType != null) {
-            if (processTypeQualifiedPathResolveVariants(lookup, path, processor, ns, primitiveType, null)) return true
+            if (processTypeQualifiedPathResolveVariants(lookup, path, processor, ns, primitiveType)) return true
         }
         return false
     }
@@ -457,17 +455,15 @@ private fun processQualifiedPathResolveVariants(
                 else -> TyUnknown
             }
         } else {
-            val realSubst = if (qualifier.typeArgumentList != null) {
+            val realSubst = if (qualifier.typeArgumentList == null && base is RsGenericDeclaration) {
+                subst.substituteInValues(Substitution(
+                    typeSubst = base.generics.associateWith { TyInfer.TyVar(it) },
+                    constSubst = base.constGenerics.associateWith { CtInferVar(it) }
+                ))
+            } else {
                 // If the path contains explicit type arguments `Foo::<_, Bar, _>::baz`
                 // it means that all possible `TyInfer` has already substituted (with `_`)
                 subst
-            } else {
-                subst
-                    .mapTypeValues { (_, v) ->
-                        v.foldTyTypeParameterWith { TyInfer.TyVar(it) }
-                            .foldCtConstParameterWith { CtInferVar(it) }
-                    }
-                    .mapConstValues { (_, v) -> v.foldCtConstParameterWith { CtInferVar(it) } }
             }
             base.declaredType.substitute(realSubst)
         }
@@ -477,16 +473,15 @@ private fun processQualifiedPathResolveVariants(
         val restrictedTraits = if (Namespace.Types in ns && base is RsImplItem && qualifier.hasCself) {
             NameResolutionTestmarks.selfRelatedTypeSpecialCase.hit()
             base.implementedTrait?.flattenHierarchy
-                ?.map { value ->
-                    value
-                        .foldTyTypeParameterWith { TyInfer.TyVar(it) }
-                        .foldCtConstParameterWith { CtInferVar(it) }
-                }
         } else {
             null
         }
 
-        if (processTypeQualifiedPathResolveVariants(lookup, path, processor, ns, baseTy, restrictedTraits)) return true
+        if (restrictedTraits != null) {
+            return processTypeAsTraitUFCSQualifiedPathResolveVariants(ns, baseTy, restrictedTraits, processor)
+        }
+
+        if (processTypeQualifiedPathResolveVariants(lookup, path, processor, ns, baseTy)) return true
     }
     return false
 }
@@ -503,13 +498,12 @@ private fun processExplicitTypeQualifiedPathResolveVariants(
         // TODO this is a hack to fix completion test `test associated type in explicit UFCS form`.
         // Looks like we should use getOriginalOrSelf during resolve
         ?.let { BoundElement(CompletionUtil.getOriginalOrSelf(it.element), it.subst) }
-        ?.let { value ->
-            value
-                .foldTyTypeParameterWith { TyInfer.TyVar(it) }
-                .foldCtConstParameterWith { CtInferVar(it) }
-        }
-    val type = typeQual.typeReference.type
-    return processTypeQualifiedPathResolveVariants(lookup, path, processor, ns, type, trait?.let { listOf(it) })
+    val baseTy = typeQual.typeReference.type
+    return if (trait != null) {
+        processTypeAsTraitUFCSQualifiedPathResolveVariants(ns, baseTy, listOf(trait), processor)
+    } else {
+        processTypeQualifiedPathResolveVariants(lookup, path, processor, ns, baseTy)
+    }
 }
 
 private fun processUnqualifiedPathResolveVariants(
@@ -594,41 +588,40 @@ private fun processTypeQualifiedPathResolveVariants(
     processor: RsResolveProcessor,
     ns: Set<Namespace>,
     baseTy: Ty,
-    restrictedTraits: List<BoundElement<RsTraitItem>>?
 ): Boolean {
     @Suppress("NAME_SHADOWING")
     val lookup = lookup ?: ImplLookup.relativeTo(path)
-    val shadowingProcessor = if (restrictedTraits != null) {
-        createProcessorGeneric<AssocItemScopeEntry>(processor.name) { e ->
-            if (e.element !is RsTypeAlias) return@createProcessorGeneric processor(e)
-
-            val implementedTrait = e.source.implementedTrait
-                ?.foldTyTypeParameterWith { TyInfer.TyVar(it) }
-                ?.foldCtConstParameterWith { CtInferVar(it) }
-                ?: return@createProcessorGeneric processor(e)
-
-            val isAppropriateTrait = restrictedTraits.any {
-                lookup.ctx.probe { lookup.ctx.combineBoundElements(it, implementedTrait) }
-            }
-            if (isAppropriateTrait) processor(e) else false
-        }
-    } else {
-        createProcessorGeneric(processor.name) { e ->
-            if (e.element is RsTypeAlias && baseTy is TyTypeParameter &&
-                e.source is TraitImplSource.ExplicitImpl) {
-                NameResolutionTestmarks.skipAssocTypeFromImpl.hit()
-                false
-            } else {
-                processor(e)
-            }
+    val (normBaseTy, _) = lookup.ctx.normalizeAssociatedTypesIn(baseTy, 0)
+    val shadowingProcessor = createProcessorGeneric<AssocItemScopeEntry>(processor.name) { e ->
+        if (e.element is RsTypeAlias && baseTy is TyTypeParameter && e.source is TraitImplSource.ExplicitImpl) {
+            NameResolutionTestmarks.skipAssocTypeFromImpl.hit()
+            false
+        } else {
+            processor(e)
         }
     }
-    val selfSubst = if (baseTy !is TyTraitObject) {
-        mapOf(TyTypeParameter.self() to baseTy).toTypeSubst()
+    val selfSubst = if (normBaseTy !is TyTraitObject) {
+        mapOf(TyTypeParameter.self() to normBaseTy).toTypeSubst()
     } else {
         emptySubstitution
     }
-    if (processAssociatedItemsWithSelfSubst(lookup, path, baseTy, ns, selfSubst, shadowingProcessor)) return true
+    if (processAssociatedItemsWithSelfSubst(lookup, path, normBaseTy, ns, selfSubst, shadowingProcessor)) return true
+    return false
+}
+
+/** For `Item` in `<T as Trait>::Item;`, process members of `Trait` */
+private fun processTypeAsTraitUFCSQualifiedPathResolveVariants(
+    ns: Set<Namespace>,
+    baseTy: Ty,
+    restrictedTraits: Collection<BoundElement<RsTraitItem>>,
+    processor: RsResolveProcessor
+): Boolean {
+    val selfSubst = mapOf(TyTypeParameter.self() to baseTy).toTypeSubst()
+    for (boundTrait in restrictedTraits) {
+        val source = TraitImplSource.Trait(boundTrait.element)
+        val subst = boundTrait.subst + selfSubst
+        if (processTraitMembers(boundTrait.element, ns, subst, baseTy, source, processor)) return true
+    }
     return false
 }
 
@@ -639,17 +632,28 @@ private fun processTraitRelativePath(
     processor: RsResolveProcessor
 ): Boolean {
     for (boundTrait in baseBoundTrait.flattenHierarchy) {
-        val trait = boundTrait.element
-        val source = TraitImplSource.Trait(trait)
-        for (item in trait.members?.expandedMembers.orEmpty()) {
-            val itemNs = when (item) {
-                is RsTypeAlias -> Namespace.Types
-                else -> Namespace.Values // RsFunction, RsConstant
-            }
-            if (itemNs !in ns) continue
-            val name = item.name ?: continue
-            if (processor(AssocItemScopeEntry(name, item, boundTrait.subst, TyUnknown, source))) return true
+        val source = TraitImplSource.Trait(boundTrait.element)
+        if (processTraitMembers(boundTrait.element, ns, boundTrait.subst, TyUnknown, source, processor)) return true
+    }
+    return false
+}
+
+private fun processTraitMembers(
+    trait: RsTraitItem,
+    ns: Set<Namespace>,
+    subst: Substitution,
+    selfTy: Ty,
+    source: TraitImplSource.Trait,
+    processor: RsResolveProcessor
+): Boolean {
+    for (item in trait.members?.expandedMembers.orEmpty()) {
+        val itemNs = when (item) {
+            is RsTypeAlias -> Namespace.Types
+            else -> Namespace.Values // RsFunction, RsConstant
         }
+        if (itemNs !in ns) continue
+        val name = item.name ?: continue
+        if (processor(AssocItemScopeEntry(name, item, subst, selfTy, source))) return true
     }
     return false
 }
@@ -1572,7 +1576,16 @@ private fun processLexicalDeclarations(
         }
 
         is RsMatchArm -> {
-            return processPattern(scope.pat, processor)
+            val guardPat = scope.matchArmGuard?.pat
+            if (guardPat == null || scope.expr != cameFrom) return processPattern(scope.pat, processor)
+            val prevScope = mutableMapOf<String, Set<Namespace>>()
+            val stop = processWithShadowingAndUpdateScope(prevScope, ns, processor) { shadowingProcessor ->
+                processPattern(guardPat, shadowingProcessor)
+            }
+            if (stop) return true
+            return processWithShadowing(prevScope, ns, processor) { shadowingProcessor ->
+                processPattern(scope.pat, shadowingProcessor)
+            }
         }
     }
     return false
@@ -1594,7 +1607,7 @@ fun processNestedScopesUpwards(
     }
     val prevScope = mutableMapOf<String, Set<Namespace>>()
     val stop = walkUp(scopeStart, { it is RsMod }) { cameFrom, scope ->
-        processWithShadowingAndUpdateScope(prevScope, processor) { shadowingProcessor ->
+        processWithShadowingAndUpdateScope(prevScope, ns, processor) { shadowingProcessor ->
             val ipm = when {
                 scope !is RsMod -> ItemProcessingMode.WITH_PRIVATE_IMPORTS
                 isCompletion -> ItemProcessingMode.WITH_PRIVATE_IMPORTS_N_EXTERN_CRATES_COMPLETION
@@ -1610,7 +1623,7 @@ fun processNestedScopesUpwards(
 
     val prelude = findPrelude(scopeStart)
     if (prelude != null) {
-        return processWithShadowing(prevScope, processor) { shadowingProcessor ->
+        return processWithShadowing(prevScope, ns, processor) { shadowingProcessor ->
             processItemDeclarations(prelude, ns, shadowingProcessor, ItemProcessingMode.WITHOUT_PRIVATE_IMPORTS)
         }
     }
@@ -1650,14 +1663,18 @@ private tailrec fun PsiFile.unwrapCodeFragments(): PsiFile {
 
 inline fun processWithShadowingAndUpdateScope(
     prevScope: MutableMap<String, Set<Namespace>>,
+    ns: Set<Namespace>,
     processor: RsResolveProcessor,
     f: (RsResolveProcessor) -> Boolean
 ): Boolean {
     val currScope = mutableMapOf<String, Set<Namespace>>()
     val shadowingProcessor = createProcessor(processor.name) { e ->
         val prevNs = prevScope[e.name]
-        if (prevNs != null && (e.element as? RsNamedElement)?.namespaces?.intersects(prevNs) == true) {
-            return@createProcessor false
+        if (prevNs != null) {
+            val newNs = (e.element as? RsNamedElement)?.namespaces
+            if (newNs != null && !ns.intersects(newNs.minus(prevNs))) {
+                return@createProcessor false
+            }
         }
         val result = processor(e)
         if (e.isInitialized) {
@@ -1677,13 +1694,14 @@ inline fun processWithShadowingAndUpdateScope(
 
 inline fun processWithShadowing(
     prevScope: Map<String, Set<Namespace>>,
+    ns: Set<Namespace>,
     originalProcessor: RsResolveProcessor,
     f: (RsResolveProcessor) -> Boolean
 ): Boolean {
     val processor = createProcessor(originalProcessor.name) { e ->
-        val prevNs = prevScope[e.name]
-        (prevNs == null || (e.element as? RsNamedElement)?.namespaces?.intersects(prevNs) != true)
-            && originalProcessor(e)
+        val prevNs = prevScope[e.name] ?: return@createProcessor originalProcessor(e)
+        val newNs = (e.element as? RsNamedElement)?.namespaces
+        (newNs == null || ns.intersects(newNs.minus(prevNs))) && originalProcessor(e)
     }
     return f(processor)
 }
@@ -1715,7 +1733,7 @@ fun findPrelude(element: RsElement): RsMod? {
 private fun findPreludeUsingNewResolve(element: RsElement): RsMod? {
     val info = getModInfo(element.containingMod) as? RsModInfo ?: return null
     val prelude = info.defMap.prelude ?: return null
-    return prelude.toRsMod(element.project).singleOrNull()
+    return prelude.toRsMod(info).singleOrNull()
 }
 
 // Implicit extern crate from stdlib

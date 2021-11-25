@@ -5,14 +5,13 @@
 
 package org.rust.ide.inspections.import
 
-import com.intellij.codeInsight.intention.HighPriorityAction
+import com.intellij.codeInsight.intention.PriorityAction
 import com.intellij.codeInspection.LocalQuickFixOnPsiElement
 import com.intellij.ide.DataManager
 import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
-import org.rust.ide.injected.isDoctestInjection
 import org.rust.ide.inspections.import.AutoImportFix.Type.*
 import org.rust.ide.utils.import.*
 import org.rust.lang.core.psi.*
@@ -23,7 +22,7 @@ import org.rust.lang.core.types.inference
 import org.rust.openapiext.Testmark
 import org.rust.openapiext.runWriteCommandAction
 
-class AutoImportFix(element: RsElement, private val type: Type) : LocalQuickFixOnPsiElement(element), HighPriorityAction {
+class AutoImportFix(element: RsElement, private val type: Type) : LocalQuickFixOnPsiElement(element), PriorityAction {
 
     private var isConsumed: Boolean = false
 
@@ -31,6 +30,8 @@ class AutoImportFix(element: RsElement, private val type: Type) : LocalQuickFixO
     override fun getText(): String = familyName
 
     public override fun isAvailable(): Boolean = super.isAvailable() && !isConsumed
+
+    override fun getPriority(): PriorityAction.Priority = PriorityAction.Priority.TOP
 
     override fun invoke(project: Project, file: PsiFile, startElement: PsiElement, endElement: PsiElement) {
         invoke(project)
@@ -97,8 +98,8 @@ class AutoImportFix(element: RsElement, private val type: Type) : LocalQuickFixO
             }
 
             val superPath = path.rootPath()
-            val candidates = if (project.useAutoImportWithNewResolve && !path.isDoctestInjection) run {
-                val importContext = ImportContext2.from(path, isCompletion = false) ?: return@run emptyList()
+            val candidates = if (path.useAutoImportWithNewResolve) run {
+                val importContext = ImportContext2.from(path, ImportContext2.Type.AUTO_IMPORT) ?: return@run emptyList()
                 ImportCandidatesCollector2.getImportCandidates(importContext, referenceName)
             } else {
                 ImportCandidatesCollector.getImportCandidates(
@@ -116,7 +117,11 @@ class AutoImportFix(element: RsElement, private val type: Type) : LocalQuickFixO
         fun findApplicableContext(project: Project, methodCall: RsMethodCall): Context? {
             val results = methodCall.inference?.getResolvedMethod(methodCall) ?: emptyList()
             if (results.isEmpty()) return Context(METHOD, emptyList())
-            val candidates = ImportCandidatesCollector.getImportCandidates(project, methodCall, results)?.toList() ?: return null
+            val candidates = if (methodCall.useAutoImportWithNewResolve) {
+                ImportCandidatesCollector2.getImportCandidates(methodCall, results)
+            } else {
+                ImportCandidatesCollector.getImportCandidates(project, methodCall, results)?.toList()
+            } ?: return null
             return Context(METHOD, candidates)
         }
 
@@ -132,7 +137,11 @@ class AutoImportFix(element: RsElement, private val type: Type) : LocalQuickFixO
                 if (it !is ResolvedPath.AssocItem) return null
                 it.source
             }
-            val candidates = ImportCandidatesCollector.getTraitImportCandidates(project, path, sources)?.toList() ?: return null
+            val candidates = if (path.useAutoImportWithNewResolve) {
+                ImportCandidatesCollector2.getTraitImportCandidates(path, sources)
+            } else {
+                ImportCandidatesCollector.getTraitImportCandidates(project, path, sources)?.toList()
+            } ?: return null
             return Context(ASSOC_ITEM_PATH, candidates)
         }
     }

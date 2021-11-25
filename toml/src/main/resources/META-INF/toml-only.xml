@@ -37,18 +37,20 @@
                          enabledByDefault="true"
                          level="WARNING"
                          implementationClass="org.rust.toml.inspections.CrateNotFoundInspection"/>
+
+        <!-- Version-related inspections are disabled for now due to false-positives -->
         <localInspection language="TOML"
                          displayName="Invalid crate version"
                          groupPath="Rust"
                          groupName="Cargo.toml"
-                         enabledByDefault="true"
+                         enabledByDefault="false"
                          level="WARNING"
                          implementationClass="org.rust.toml.inspections.CrateVersionInvalidInspection"/>
         <localInspection language="TOML"
                          displayName="New crate version available"
                          groupPath="Rust"
                          groupName="Cargo.toml"
-                         enabledByDefault="true"
+                         enabledByDefault="false"
                          level="WARNING"
                          implementationClass="org.rust.toml.inspections.NewCrateVersionAvailableInspection"/>
 
@@ -66,7 +68,13 @@
                             serviceImplementation="org.rust.toml.crates.local.CratesLocalIndexServiceImpl"
                             testServiceImplementation="org.rust.toml.crates.local.TestCratesLocalIndexServiceImpl"/>
 
-        <backgroundPostStartupActivity implementation="org.rust.toml.crates.local.CratesLocalIndexStartupActivity"/>
         <cachesInvalidator implementation="org.rust.toml.crates.local.CratesLocalIndexCachesInvalidator"/>
+
+        <vfs.asyncListener implementation="org.rust.toml.crates.local.CratesLocalIndexVfsListener"/>
     </extensions>
+
+    <projectListeners>
+        <listener class="org.rust.toml.crates.local.CratesLocalIndexWaker"
+                  topic="org.rust.cargo.project.model.CargoProjectsService$CargoProjectsListener" />
+    </projectListeners>
 </idea-plugin>

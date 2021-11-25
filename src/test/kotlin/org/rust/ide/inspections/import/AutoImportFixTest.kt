@@ -9,7 +9,6 @@ import org.rust.*
 import org.rust.cargo.project.workspace.CargoWorkspace
 import org.rust.ide.utils.import.Testmarks
 
-@UseNewResolve
 class AutoImportFixTest : AutoImportFixTestBase() {
 
     fun `test import struct`() = checkAutoImportFixByText("""
@@ -1664,6 +1663,39 @@ class AutoImportFixTest : AutoImportFixTestBase() {
         }
     """)
 
+    @MockEdition(CargoWorkspace.Edition.EDITION_2018)
+    fun `test import trait default method UFCS 2`() = checkAutoImportFixByFileTree("""
+    //- lib.rs
+        pub trait Trait {
+            fn foo() {}
+        }
+        impl<T> Trait for T {}
+    //- main.rs
+        pub use test_package::Trait;
+
+        mod inner {
+            fn main() {
+                i32::<error descr="Unresolved reference: `foo`">foo/*caret*/</error>();
+            }
+        }
+    """, """
+    //- lib.rs
+        pub trait Trait {
+            fn foo() {}
+        }
+        impl<T> Trait for T {}
+    //- main.rs
+        pub use test_package::Trait;
+
+        mod inner {
+            use test_package::Trait;
+
+            fn main() {
+                i32::foo();
+            }
+        }
+    """)
+
     fun `test import trait default assoc function`() = checkAutoImportFixByText("""
         mod foo {
             pub struct S;
@@ -1805,6 +1837,29 @@ class AutoImportFixTest : AutoImportFixTestBase() {
 
         fn main() {
             let x = 123.foo/*caret*/();
+        }
+    """)
+
+    @MockEdition(CargoWorkspace.Edition.EDITION_2018)
+    @ProjectDescriptor(WithDependencyRustProjectDescriptor::class)
+    fun `test import trait method, use direct path`() = checkAutoImportFixByFileTree("""
+    //- dep-lib/lib.rs
+        pub trait Foo {
+            fn foo(&self) {}
+        }
+        impl<T> Foo for T {}
+    //- lib.rs
+        pub extern crate dep_lib_target;
+    //- main.rs
+        fn main() {
+            let x = 123.<error descr="Unresolved reference: `foo`">foo/*caret*/</error>();
+        }
+    """, """
+    //- main.rs
+        use dep_lib_target::Foo;
+
+        fn main() {
+            let x = 123.foo();
         }
     """)
 
@@ -2862,6 +2917,25 @@ class AutoImportFixTest : AutoImportFixTestBase() {
         mod foo;
         fn main() {
             <error descr="Unresolved reference: `func`">func/*caret*/</error>!();
+        }
+    """)
+
+    @MockEdition(CargoWorkspace.Edition.EDITION_2018)
+    fun `test use absolute path when extern crate has same name as child mod`() = checkAutoImportFixByFileTree("""
+    //- lib.rs
+        pub fn func() {}
+    //- main.rs
+        mod test_package {}
+        fn main() {
+            <error descr="Unresolved reference: `func`">func/*caret*/</error>();
+        }
+    """, """
+    //- main.rs
+        use ::test_package::func;
+
+        mod test_package {}
+        fn main() {
+            func();
         }
     """)
 }

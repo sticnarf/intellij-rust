@@ -18,7 +18,7 @@ import com.intellij.refactoring.util.CommonRefactoringUtil
 import org.rust.ide.refactoring.*
 import org.rust.ide.utils.import.RsImportHelper
 import org.rust.lang.core.psi.*
-import org.rust.lang.core.psi.ext.isConst
+import org.rust.lang.core.psi.ext.*
 import org.rust.openapiext.nonBlocking
 import org.rust.openapiext.runWriteCommandAction
 
@@ -75,11 +75,27 @@ private fun RsExpr.isExtractable(): Boolean {
     }
 }
 
-private fun replaceWithConstant(expr: RsExpr, occurrences: List<RsExpr>, candidate: InsertionCandidate, editor: Editor) {
+// This cannot be called from EDT, because it uses resolve
+private fun findExistingBindings(candidate: InsertionCandidate, occurrences: List<RsExpr>): Set<String> {
+    val owner = candidate.parent
+    return (owner.children.first() as? RsElement)?.getAllVisibleBindings().orEmpty() +
+        occurrences.flatMap { it.getLocalVariableVisibleBindings().keys }
+}
+
+private fun replaceWithConstant(
+    expr: RsExpr,
+    occurrences: List<RsExpr>,
+    candidate: InsertionCandidate,
+    existingBindings: Set<String>,
+    editor: Editor,
+) {
     val project = expr.project
     val factory = RsPsiFactory(project)
     val suggestedNames = expr.suggestedNames()
-    val name = suggestedNames.default.toUpperCase()
+
+    val name = suggestedNames.all.map { it.toUpperCase() }.firstOrNull { it !in existingBindings }
+        ?: freshenName(suggestedNames.default.toUpperCase(), existingBindings)
+
     val const = factory.createConstant(name, expr)
 
     project.runWriteCommandAction {
@@ -101,7 +117,7 @@ private fun replaceWithConstant(expr: RsExpr, occurrences: List<RsExpr>, candida
 
         PsiDocumentManager.getInstance(project).doPostponedOperationsAndUnblockDocument(editor.document)
         RsInPlaceVariableIntroducer(insertedConstant, editor, project, "Choose a constant name", replaced)
-            .performInplaceRefactoring(LinkedHashSet(suggestedNames.all.map { it.toUpperCase() }))
+            .performInplaceRefactoring(linkedSetOf(name))
     }
 }
 
@@ -109,8 +125,13 @@ private fun extractExpression(editor: Editor, expr: RsExpr) {
     if (!expr.isValid) return
     val occurrences = findOccurrences(expr)
     showOccurrencesChooser(editor, expr, occurrences) { occurrencesToReplace ->
-        showInsertionChooser(editor, expr) {
-            replaceWithConstant(expr, occurrencesToReplace, it, editor)
+        showInsertionChooser(editor, expr) { candidate ->
+            val project = editor.project ?: return@showInsertionChooser
+            nonBlocking(project, {
+                findExistingBindings(candidate, occurrences)
+            }) { bindings ->
+                replaceWithConstant(expr, occurrencesToReplace, candidate, bindings, editor)
+            }
         }
     }
 }

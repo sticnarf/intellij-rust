@@ -6,6 +6,11 @@
 package org.rust.ide.inspections
 
 import com.intellij.codeInspection.*
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.EditorFactory
+import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.codeInspection.util.InspectionMessage
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiElement
@@ -62,7 +67,7 @@ class RsProblemsHolder(private val holder: ProblemsHolder) {
     val project: Project get() = holder.project
     val isOnTheFly: Boolean get() = holder.isOnTheFly
 
-    fun registerProblem(element: PsiElement, descriptionTemplate: String, vararg fixes: LocalQuickFix?) {
+    fun registerProblem(element: PsiElement, @InspectionMessage descriptionTemplate: String, vararg fixes: LocalQuickFix?) {
         if (element.existsAfterExpansion) {
             holder.registerProblem(element, descriptionTemplate, *fixes)
         }
@@ -70,7 +75,7 @@ class RsProblemsHolder(private val holder: ProblemsHolder) {
 
     fun registerProblem(
         element: PsiElement,
-        descriptionTemplate: String,
+        @InspectionMessage descriptionTemplate: String,
         highlightType: ProblemHighlightType,
         vararg fixes: LocalQuickFix
     ) {
@@ -85,7 +90,7 @@ class RsProblemsHolder(private val holder: ProblemsHolder) {
         }
     }
 
-    fun registerProblem(element: PsiElement, rangeInElement: TextRange, message: String, vararg fixes: LocalQuickFix?) {
+    fun registerProblem(element: PsiElement, rangeInElement: TextRange, @InspectionMessage message: String, vararg fixes: LocalQuickFix?) {
         if (element.existsAfterExpansion) {
             holder.registerProblem(element, rangeInElement, message, *fixes)
         }
@@ -93,7 +98,7 @@ class RsProblemsHolder(private val holder: ProblemsHolder) {
 
     fun registerProblem(
         element: PsiElement,
-        message: String,
+        @InspectionMessage message: String,
         highlightType: ProblemHighlightType,
         rangeInElement: TextRange,
         vararg fixes: LocalQuickFix?
@@ -102,4 +107,11 @@ class RsProblemsHolder(private val holder: ProblemsHolder) {
             holder.registerProblem(element, message, highlightType, rangeInElement, *fixes)
         }
     }
+}
+
+fun ProblemDescriptor.findExistingEditor(): Editor? {
+    ApplicationManager.getApplication().assertReadAccessAllowed()
+    val file = (this as? ProblemDescriptorBase)?.containingFile ?: return null
+    val document = FileDocumentManager.getInstance().getDocument(file) ?: return null
+    return EditorFactory.getInstance().getEditors(document).firstOrNull()
 }

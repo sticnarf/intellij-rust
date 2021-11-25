@@ -19,7 +19,6 @@ import org.rust.stdext.singleOrFilter
 /**
  * A test for detecting proc macro attributes on items. See [ProcMacroAttribute]
  */
-@UseNewResolve
 @ProjectDescriptor(WithProcMacroRustProjectDescriptor::class)
 @WithExperimentalFeatures(EVALUATE_BUILD_SCRIPTS, PROC_MACROS)
 class ProcMacroAttributeTest : RsTestBase() {
@@ -417,7 +416,7 @@ class ProcMacroAttributeTest : RsTestBase() {
     private fun ProcMacroAttribute<RsMetaItem>.toTestValue() =
         when (this) {
             is ProcMacroAttribute.Attr -> Attr(attr.path!!.text, index)
-            ProcMacroAttribute.Derive -> Derive
+            is ProcMacroAttribute.Derive -> Derive
             ProcMacroAttribute.None -> None
         }
 

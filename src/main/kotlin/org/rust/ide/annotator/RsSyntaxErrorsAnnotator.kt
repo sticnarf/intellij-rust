@@ -7,6 +7,7 @@ package org.rust.ide.annotator
 
 import com.intellij.codeInspection.InspectionManager
 import com.intellij.codeInspection.ProblemHighlightType
+import com.intellij.codeInspection.util.InspectionMessage
 import com.intellij.lang.annotation.AnnotationHolder
 import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.openapi.util.TextRange
@@ -122,26 +123,26 @@ private fun checkTypeAlias(holder: AnnotationHolder, ta: RsTypeAlias) {
     when (val owner = ta.owner) {
         is RsAbstractableOwner.Free -> {
             deny(ta.default, holder, "$title cannot have the `default` qualifier")
-            deny(ta.typeParamBounds, holder, "$title cannot have type parameter bounds")
-            require(ta.typeReference, holder, "Aliased type must be provided for type `${ta.identifier.text}`", ta)
+            deny(ta.typeParamBounds, holder, "Bounds on $title have no effect")
+            require(ta.typeReference, holder, "$title should have a body`", ta)
         }
         is RsAbstractableOwner.Trait -> {
             deny(ta.default, holder, "$title cannot have the `default` qualifier")
-            deny(ta.vis, holder, "$title cannot have the `pub` qualifier")
-            deny(ta.typeParameterList, holder, "$title cannot have generic parameters")
-            deny(ta.whereClause, holder, "$title cannot have `where` clause")
         }
         is RsAbstractableOwner.Impl -> {
-            if (owner.impl.`for` == null) {
-                RsDiagnostic.AssociatedTypeInInherentImplError(ta).addToHolder(holder)
-            } else {
-                deny(ta.typeParameterList, holder, "$title cannot have generic parameters")
-                deny(ta.whereClause, holder, "$title cannot have `where` clause")
-                deny(ta.typeParamBounds, holder, "$title cannot have type parameter bounds")
-                require(ta.typeReference, holder, "Aliased type must be provided for type `${ta.identifier.text}`", ta)
+            if (owner.isInherent) {
+                deny(ta.default, holder, "$title cannot have the `default` qualifier")
             }
+            deny(ta.typeParamBounds, holder, "Bounds on $title have no effect")
+            require(ta.typeReference, holder, "$title should have a body", ta)
         }
-        RsAbstractableOwner.Foreign -> Unit
+        RsAbstractableOwner.Foreign -> {
+            deny(ta.default, holder, "$title cannot have the `default` qualifier")
+            deny(ta.typeParameterList, holder, "$title cannot have generic parameters")
+            deny(ta.whereClause, holder, "$title cannot have `where` clause")
+            deny(ta.typeParamBounds, holder, "Bounds on $title have no effect")
+            deny(ta.typeReference, holder, "$title cannot have a body", ta)
+        }
     }
 }
 
@@ -364,19 +365,27 @@ private fun require(el: PsiElement?, holder: AnnotationHolder, message: String, 
             .range(highlightElements.combinedRange!!).create()
     }
 
-private fun deny(el: PsiElement?, holder: AnnotationHolder, message: String, vararg highlightElements: PsiElement?): Unit? =
-    if (el == null) null
-    else {
-        holder.newAnnotation(HighlightSeverity.ERROR, message)
-            .range(highlightElements.combinedRange ?: el.textRange).create()
-    }
+private fun deny(
+    el: PsiElement?,
+    holder: AnnotationHolder,
+    @InspectionMessage message: String,
+    vararg highlightElements: PsiElement?
+) {
+    if (el == null) return
+    holder.newAnnotation(HighlightSeverity.ERROR, message)
+        .range(highlightElements.combinedRange ?: el.textRange).create()
+}
 
-private inline fun <reified T : RsElement> denyType(el: PsiElement?, holder: AnnotationHolder, message: String, vararg highlightElements: PsiElement?): Unit? =
-    if (el !is T) null
-    else {
-        holder.newAnnotation(HighlightSeverity.ERROR, message)
-            .range(highlightElements.combinedRange ?: el.textRange).create()
-    }
+private inline fun <reified T : RsElement> denyType(
+    el: PsiElement?,
+    holder: AnnotationHolder,
+    @InspectionMessage message: String,
+    vararg highlightElements: PsiElement?
+) {
+    if (el !is T) return
+    holder.newAnnotation(HighlightSeverity.ERROR, message)
+        .range(highlightElements.combinedRange ?: el.textRange).create()
+}
 
 private val Array<out PsiElement?>.combinedRange: TextRange?
     get() = if (isEmpty())

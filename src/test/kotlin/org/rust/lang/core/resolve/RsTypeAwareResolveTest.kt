@@ -802,38 +802,6 @@ class RsTypeAwareResolveTest : RsResolveTestBase() {
         }                    //^
     """, NameResolutionTestmarks.selfRelatedTypeSpecialCase)
 
-    fun `test Self-qualified path in trait impl is resolved to assoc type of super trait (generic trait 1)`() = checkByCode("""
-        struct S;
-        trait Trait1<T> { type Item; }
-        trait Trait2<T>: Trait1<T> { fn foo() -> i32; }
-
-        impl Trait1<i32> for S {
-            type Item = i32;
-        }       //X
-        impl Trait1<u8> for S {
-            type Item = u8;
-        }
-        impl Trait2<i32> for S {
-            fn foo() -> Self::Item { unreachable!() }
-        }                   //^
-    """, NameResolutionTestmarks.selfRelatedTypeSpecialCase)
-
-    fun `test Self-qualified path in trait impl is resolved to assoc type of super trait (generic trait 2)`() = checkByCode("""
-        struct S;
-        trait Trait1<T=u8> { type Item; }
-        trait Trait2<T>: Trait1<T> { fn foo() -> i32; }
-
-        impl Trait1<i32> for S {
-            type Item = i32;
-        }       //X
-        impl Trait1 for S {
-            type Item = u8;
-        }
-        impl Trait2<i32> for S {
-            fn foo() -> Self::Item { unreachable!() }
-        }                   //^
-    """, NameResolutionTestmarks.selfRelatedTypeSpecialCase)
-
     fun `test explicit UFCS-like type-qualified path`() = checkByCode("""
         struct S;
         impl S {

@@ -721,7 +721,7 @@ class RsErrorAnnotatorTest : RsAnnotatorTestBase(RsErrorAnnotator::class) {
 
         fn err<'a>(a: &'a str) {
             'foo: loop { continue <error descr="Use of undeclared label `'bar` [E0426]">'bar</error> }
-            while true { break <error descr="Use of undeclared label `'static` [E0426]">'static</error> }
+            while true { break <error descr="Invalid label name `'static`"><error descr="Use of undeclared label `'static` [E0426]">'static</error></error> }
             for _ in 0..1 { break <error descr="Use of undeclared label `'a` [E0426]">'a</error> }
         }
     """)
@@ -969,7 +969,6 @@ class RsErrorAnnotatorTest : RsAnnotatorTestBase(RsErrorAnnotator::class) {
         macro_rules! foo { () => {} }
     """)
 
-    @UseNewResolve
     @MockEdition(CargoWorkspace.Edition.EDITION_2018)
     fun `test no duplicates with import E0252 private item`() = checkErrors("""
         mod mod1 {
@@ -1200,6 +1199,18 @@ class RsErrorAnnotatorTest : RsAnnotatorTestBase(RsErrorAnnotator::class) {
         }
         fn main() {
             let f = some_module::Foo { <error descr="Field `x` of struct `some_module::Foo` is private [E0451]">x</error>: 0 };
+        }
+    """)
+
+    fun `test attempted to construct struct which has a private field with field shorthand E0451`() = checkErrors("""
+        mod some_module {
+            pub struct Foo {
+                x: u32,
+            }
+        }
+        fn main() {
+            let x: u32 = 0;
+            let f = some_module::Foo { <error descr="Field `x` of struct `some_module::Foo` is private [E0451]">x</error> };
         }
     """)
 
@@ -3011,6 +3022,29 @@ class RsErrorAnnotatorTest : RsAnnotatorTestBase(RsErrorAnnotator::class) {
         }
     """)
 
+    @MockRustcVersion("1.47.0")
+    fun `test if let guard E0658 1`() = checkErrors("""
+        fn main() {
+            let xs = vec![0i32];
+            match xs.len() {
+                1 if <error descr="if let guard is experimental [E0658]">let</error> Some(x) = xs.iter().next() => {}
+                _ => unreachable!(),
+            }
+        }
+    """)
+
+    @MockRustcVersion("1.47.0-nightly")
+    fun `test if let guard E0658 2`() = checkErrors("""
+        #![feature(if_let_guard)]
+        fn main() {
+            let xs = vec![0i32];
+            match xs.len() {
+                1 if let Some(x) = xs.iter().next() => {}
+                _ => unreachable!(),
+            }
+        }
+    """)
+
     @MockRustcVersion("1.0.0-nightly")
     fun `test stable attr on invalid owner E0132`() = checkErrors("""
         #![feature(start)]
@@ -4373,5 +4407,130 @@ class RsErrorAnnotatorTest : RsAnnotatorTestBase(RsErrorAnnotator::class) {
         #![feature(abi_x86_interrupt)]
 
         extern "x86-interrupt"/*caret*/ fn extern_fn() {}
+    """)
+
+    fun `test edition 2015 keyword as lifetime name`() = checkErrors("""
+        struct Me<<error descr="Lifetimes cannot use keyword names">'type</error>> {
+            name: &<error descr="Lifetimes cannot use keyword names">'type</error> str,
+        }
+    """)
+
+    @MockEdition(CargoWorkspace.Edition.EDITION_2018)
+    fun `test edition 2018 keyword as lifetime name`() = checkErrors("""
+        struct Me<<error descr="Lifetimes cannot use keyword names">'async</error>> {
+            name: &<error descr="Lifetimes cannot use keyword names">'async</error> str,
+        }
+    """)
+
+    fun `test use edition 2018 keyword as lifetime name in the edition 2015`() = checkErrors("""
+        struct Me<'async>  {
+            name: &'async str,
+        }
+    """)
+
+    @MockRustcVersion("1.56.0")
+    fun `test macro 2 is experimental 1`() = checkErrors("""
+        pub <error descr="`macro` is experimental [E0658]">macro</error> id($ e:expr) {
+            $ e
+        }
+    """)
+
+    @MockRustcVersion("1.56.0-nightly")
+    fun `test macro 2 is experimental 2`() = checkErrors("""
+        #![feature(decl_macro)]
+
+        pub macro id($ e:expr) {
+            $ e
+        }
+    """)
+
+    fun `test keyword as label name`() = checkErrors("""
+        fn main() {
+            let mut x = 0;
+            <error descr="Invalid label name `'fn`">'fn</error>: while true {
+                println!("hello");
+                x = x + 1;
+                if x == 100 {
+                    break <error descr="Invalid label name `'fn`">'fn</error>;
+                }
+            }
+        }
+    """)
+
+    @MockRustcVersion("1.23.0")
+    fun `test extern types E0658 1`() = checkErrors("""
+        extern { <error descr="extern types is experimental [E0658]">type ItemForeign;</error> }
+    """)
+
+    @MockRustcVersion("1.23.0-nightly")
+    fun `test extern types E0658 2`() = checkErrors("""
+        #![feature(extern_types)]
+        extern { type ItemForeign; }
+    """)
+
+    @MockRustcVersion("1.23.0")
+    fun `test generic associated types E0658 1`() = checkErrors("""
+        struct S;
+        type ItemFree<'a> where 'a : 'static = S;
+        impl S { <error>type Item<error descr="generic associated types is experimental [E0658]"><'a></error> <error descr="where clauses on associated types is experimental [E0658]">where 'a : 'static</error> = S;</error> }
+        trait T { type Item<error descr="generic associated types is experimental [E0658]"><'a></error> <error descr="where clauses on associated types is experimental [E0658]">where 'a : 'static</error>; }
+        impl T for S { type Item<error descr="generic associated types is experimental [E0658]"><'a></error> <error descr="where clauses on associated types is experimental [E0658]">where 'a : 'static</error> = S; }
+    """)
+
+    @MockRustcVersion("1.23.0-nightly")
+    fun `test generic associated types E0658 2`() = checkErrors("""
+        #![feature(generic_associated_types)]
+        struct S;
+        type ItemFree<'a> where 'a : 'static = S;
+        impl S { <error>type Item<'a> where 'a : 'static = S;</error> }
+        trait T { type Item<'a> where 'a : 'static; }
+        impl T for S { type Item<'a> where 'a : 'static = S; }
+    """)
+
+    fun `test generic associated types E0658 3`() = checkErrors("""
+        struct S;
+        type ItemFree<>;
+        impl S { type Item<>; }
+        trait T { type Item<>; }
+        impl T for S { type Item<>; }
+    """)
+
+    @MockRustcVersion("1.52.0")
+    fun `test inherent associated types E0658 1`() = checkErrors("""
+        impl S { <error descr="inherent associated types is experimental [E0658]">type Item;</error> }
+    """)
+
+    @MockRustcVersion("1.52.0-nightly")
+    fun `test inherent associated types E0658 2`() = checkErrors("""
+        #![feature(inherent_associated_types)]
+        impl S { type Item; }
+    """)
+
+    @MockRustcVersion("1.2.0")
+    fun `test associated type defaults E0658 1`() = checkErrors("""
+        struct S;
+        type ItemFree = S;
+        impl S { <error>type Item = S;</error> }
+        trait T { type Item = <error descr="associated type defaults is experimental [E0658]">S</error>; }
+        impl T for S { type Item = S; }
+    """)
+
+    @MockRustcVersion("1.2.0-nightly")
+    fun `test associated type defaults E0658 2`() = checkErrors("""
+        #![feature(associated_type_defaults)]
+        struct S;
+        type ItemFree = S;
+        impl S { <error>type Item = S;</error> }
+        trait T { type Item = S; }
+        impl T for S { type Item = S; }
+    """)
+
+    fun `test unnecessary visibility qualifier E0449`() = checkErrors("""
+        struct S;
+        pub type ItemFree = S;
+        impl S { pub type Item = S; }
+        trait T { <error descr="Unnecessary visibility qualifier [E0449]">pub</error> type Item; }
+        impl T for S { <error descr="Unnecessary visibility qualifier [E0449]">pub</error> type Item = S; }
+        extern { pub type ItemForeign; }
     """)
 }

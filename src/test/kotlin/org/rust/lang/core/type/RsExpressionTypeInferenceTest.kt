@@ -124,6 +124,76 @@ class RsExpressionTypeInferenceTest : RsTypificationTestBase() {
         fn foo(s: S<u32>) {}
     """)
 
+    fun `test labeled block expr nested 1`() = testExpr("""
+        fn main() {
+            let x = 'a: {
+                {
+                    break 'a 1u32;
+                }
+            };
+            x;
+          //^ u32
+        }
+    """)
+
+    fun `test labeled block expr nested 2`() = testExpr("""
+        fn main() {
+            let x = 'a: {
+                'b: {
+                    break 'a 1u32;
+                }
+            };
+            x;
+          //^ u32
+        }
+    """)
+
+    fun `test labeled block expr nested 3`() = testExpr("""
+        fn main() {
+            let x = 'a: {
+                'b: {
+                    break 'b 1u32;
+                }
+            };
+            x;
+          //^ u32
+        }
+    """)
+
+    fun `test labeled block expr nested 4`() = testExpr("""
+        fn main() {
+            let x = 'a: {
+                'b: {
+                    break 1u32;
+                }
+            };
+            x;
+          //^ !
+        }
+    """)
+
+    fun `test labeled block expr nested 5`() = testExpr("""
+        fn main() {
+            let x = 'a: {
+                loop {
+                    break 1u32;
+                }
+            };
+            x;
+          //^ u32
+        }
+    """)
+
+    fun `test labeled block expr nested 6`() = testExpr("""
+        fn main() {
+            let x = 'a: {
+                loop { }
+            };
+            x;
+          //^ !
+        }
+    """)
+
     fun `test try block expr (option)`() = testExpr("""
         #[lang = "core::option::Option"]
         enum Option<T> { None, Some(T) }
@@ -432,6 +502,36 @@ class RsExpressionTypeInferenceTest : RsTypificationTestBase() {
         }
     """)
 
+    fun `test loop with inner block`() = testExpr("""
+        fn main() {
+            let x = loop {
+                { break "bar"; }
+            };
+            x;
+          //^ &str
+        }
+    """)
+
+    fun `test loop with inner nested block`() = testExpr("""
+        fn main() {
+            let x = loop {
+                let _ = { break true; };
+            };
+            x;
+          //^ bool
+        }
+    """)
+
+    fun `test loop with inner nested labeled block`() = testExpr("""
+        fn main() {
+            let x = loop {
+                let _ = 'a: { break 'a true; };
+            };
+            x;
+          //^ !
+        }
+    """)
+
     fun `test loop labeled break value 1`() = testExpr("""
         fn foo(v: bool) {
             let x = 'outer: loop {
@@ -671,6 +771,18 @@ class RsExpressionTypeInferenceTest : RsTypificationTestBase() {
             };
             s;
         } //^ &S
+    """)
+
+    fun `test match let guard`() = testExpr("""
+        struct S(i32);
+
+        fn foo() {
+            match y {
+                _ if let S(i) = S(0) => 1,
+                         //^ i32
+                _ => 0
+            };
+        }
     """)
 
     fun `test parens`() = testExpr("""
