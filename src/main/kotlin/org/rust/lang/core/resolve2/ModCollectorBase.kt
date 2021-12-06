@@ -227,7 +227,7 @@ class ModCollectorBase private constructor(
         val attrPathSegments = attrPath.getPathWithAdjustedDollarCrate() ?: return
 
         val originalItem = if (item is RsNamedStub && RsProcMacroPsiUtil.canFallBackAttrMacroToOriginalItem(item)) {
-            lowerSimpleItem(item)?.takeIf { it.procMacroKind == null }
+            lowerSimpleItem(item)
         } else {
             null
         }
@@ -687,7 +687,7 @@ fun StubElement<*>.hasMacroIndex(crate: Crate): Boolean {
     if (hasMacroIndexIgnoringProcMacros()) return true
     if (this !is RsAttrProcMacroOwnerStub) return false
     val attr = ProcMacroAttribute.getProcMacroAttributeWithoutResolve(
-        psi as RsAttrProcMacroOwner,
+        this,
         this,
         crate,
         withDerives = true

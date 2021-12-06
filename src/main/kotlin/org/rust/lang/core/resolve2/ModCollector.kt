@@ -150,6 +150,7 @@ private class ModCollector(
         val perNs = PerNs.from(visItem, item.namespaces)
         onAddItem(modData, name, perNs, visItem.visibility)
 
+        /** See also [DefCollector.tryTreatAsIdentityMacro] */
         if (item.procMacroKind != null) {
             modData.procMacros[name] = item.procMacroKind
         }
@@ -323,7 +324,7 @@ private class ModCollector(
         ) ?: RangeMap.EMPTY
         val originalItem = call.originalItem?.let {
             val visItem = convertToVisItem(it, isModOrEnum = false, forceCfgDisabledVisibility = false)
-            visItem to it.namespaces
+            Triple(visItem, it.namespaces, it.procMacroKind)
         }
         context.context.macroCalls += MacroCallInfo(
             modData,
